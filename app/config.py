@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 class Settings:
     bot_token: str
     download_dir: Path
+    """PostgreSQL DSN (Railway sets DATABASE_URL). If None, SQLite uses db_path."""
+    database_url: str | None
+    """SQLite file when database_url is unset (local dev)."""
+    db_path: Path | None
     webapp_url: str | None
     groq_api_key: str | None = None
     groq_model: str = "llama-3.3-70b-versatile"
@@ -76,6 +80,26 @@ def load_settings() -> Settings:
     download_dir = Path(os.getenv("DOWNLOAD_DIR", "/tmp/scbot"))
     download_dir.mkdir(parents=True, exist_ok=True)
 
+    database_url = (os.getenv("DATABASE_URL") or "").strip() or None
+
+    db_path: Path | None = None
+    if not database_url:
+        db_path = Path(os.getenv("DB_PATH", "/data/scbot.db"))
+        try:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            fallback = Path("/tmp/scbot.db")
+            logger.warning(
+                "DB_PATH parent %s is not writable, falling back to %s. "
+                "For production use DATABASE_URL (PostgreSQL) on Railway.",
+                db_path.parent,
+                fallback,
+            )
+            db_path = fallback
+        logger.info("Using SQLite for acceptances at %s", db_path)
+    else:
+        logger.info("Using PostgreSQL for acceptances (DATABASE_URL is set).")
+
     wait_seconds = int(os.getenv("WEBAPP_URL_WAIT_SECONDS", "120"))
     webapp_url = _read_webapp_url(wait_seconds)
 
@@ -89,6 +113,8 @@ def load_settings() -> Settings:
     return Settings(
         bot_token=token,
         download_dir=download_dir,
+        database_url=database_url,
+        db_path=db_path,
         webapp_url=webapp_url,
         groq_api_key=groq_api_key,
         groq_model=groq_model,

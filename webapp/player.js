@@ -134,6 +134,13 @@
     }
 
     showPlayerView();
+    if (tg && typeof tg.enableClosingConfirmation === "function") {
+      try {
+        tg.enableClosingConfirmation(true);
+      } catch (e) {
+        /* older clients */
+      }
+    }
     return true;
   }
 

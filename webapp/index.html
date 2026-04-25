@@ -33,7 +33,9 @@
             <span class="search__btn-icon" aria-hidden="true">🔎</span>
           </button>
         </div>
-        <div id="searchHint" class="search__hint">Можно ввести название или ссылку с soundcloud.com.</div>
+        <div id="searchHint" class="search__hint">
+          Можно ввести название или ссылку с soundcloud.com. Скачивание mp3 — только в личном чате с ботом.
+        </div>
       </section>
 
       <section id="results" class="results hidden" aria-live="polite"></section>
@@ -70,7 +72,10 @@
       </section>
 
       <footer class="hint">
-        Плеер использует официальный SoundCloud Widget. Воспроизведение идёт прямо с soundcloud.com.
+        Плеер использует официальный SoundCloud Widget. Звук идёт, пока открыт этот Mini App:
+        при закрытии (× или смахивание вниз) Telegram обычно останавливает WebView — отдельного
+        «фонового режима» как у музыкальных приложений у Mini App нет. Перед закрытием может
+        появиться подтверждение, если уже играет трек.
       </footer>
     </main>
 

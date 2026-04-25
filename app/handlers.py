@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections import OrderedDict
 from urllib.parse import quote
@@ -23,14 +24,18 @@ from aiogram.types import (
 from aiogram.utils.markdown import hbold
 
 from app.config import Settings
+from app.db import AcceptanceStore
 from app.llm import LLMClient, LLMUnavailable
 from app.soundcloud import (
     SearchResult,
     SoundCloudError,
     Track,
     TrackTooLargeError,
+    download_short_video,
     download_track,
+    find_instagram_reel_url,
     find_soundcloud_url,
+    find_tiktok_url,
     search_tracks,
     tag_id3,
 )
@@ -39,14 +44,20 @@ logger = logging.getLogger(__name__)
 
 WELCOME_TEXT = (
     "Привет! Я работаю с SoundCloud:\n\n"
-    "1) Кинь ссылку на трек — пришлю mp3 с обложкой.\n"
+    "1) Кинь ссылку на трек SoundCloud — пришлю mp3 с обложкой.\n"
+    "   Ссылку на Reels (instagram.com/reel/…) или TikTok (tiktok.com, vm.tiktok.com) — "
+    "пришлю видео файлом.\n"
     "2) Напиши название — найду первые 10 совпадений. Если не нашлось, AI попробует "
     "угадать артиста (опечатки, фонетика — например «пинк флойд камфортабли намб») "
     "и поищет ещё раз.\n"
-    "3) Открой Mini App ниже — встроенный плеер с поиском и виджетом.\n\n"
+    "3) Открой Mini App ниже — встроенный плеер с поиском и виджетом.\n"
+    "4) В любом чате через @бот можно быстро найти трек и отправить ссылку — "
+    "там только прослушивание в плеере или на SoundCloud; mp3 — только в этом чате "
+    "после /terms.\n\n"
     "Команды:\n"
     "/start — это сообщение\n"
     "/player — открыть плеер\n"
+    "/terms — условия использования\n"
     "/help — помощь"
 )
 
@@ -54,20 +65,62 @@ HELP_TEXT = (
     "Поддерживаются ссылки вида:\n"
     "• https://soundcloud.com/&lt;artist&gt;/&lt;track&gt;\n"
     "• https://m.soundcloud.com/...\n"
-    "• https://on.soundcloud.com/&lt;short&gt;\n\n"
+    "• https://on.soundcloud.com/&lt;short&gt;\n"
+    "• https://www.instagram.com/reel/&lt;id&gt;/ (и /reels/, share/reel)\n"
+    "• https://www.tiktok.com/@…/video/… или короткая https://vm.tiktok.com/…\n\n"
     "Поиск: просто пришли название трека (например, «forss flickermood» или "
     "«психоцикл амба») — выберу из топ-10.\n"
     "Если ничего не нашлось и на сервере включён GROQ_API_KEY, AI попробует узнать "
     "артиста (даже если ты написал «пинк флойд камфортабли намб» — поищет «pink floyd "
     "comfortably numb») и поищет ещё раз.\n\n"
     "Скачивание: лимит Telegram на аудио от ботов — 50 МБ.\n"
-    "Mini App плеер: открывается прямо в Telegram, без скачивания."
+    "Перед первым скачиванием бот один раз попросит принять условия "
+    "использования (/terms).\n"
+    "Mini App плеер: открывается прямо в Telegram, без скачивания. Звук идёт, пока "
+    "открыт Mini App; при полном закрытии окна Telegram обычно останавливает "
+    "воспроизведение (это ограничение платформы, не «фон» как в Spotify).\n"
+    "Inline (@бот в любом чате): только ссылка и кнопки «в плеере» / на SoundCloud — "
+    "без отправки mp3 оттуда."
 )
 
 CALLBACK_PICK_PREFIX = "pick:"
+CALLBACK_ACCEPT_PREFIX = "accept:"
+CALLBACK_DECLINE = "decline"
 MAX_BUTTON_TEXT = 60
 SEARCH_LIMIT = 10
 SEARCH_CACHE_SIZE = 2000
+
+TERMS_VERSION = "1.2"
+
+TERMS_TEXT = (
+    "<b>Условия использования</b> (версия " + TERMS_VERSION + ")\n\n"
+    "Этот бот — инструмент общего назначения, который по запросу пользователя "
+    "обращается к публичным страницам (SoundCloud, Instagram, TikTok и др.) и сохраняет "
+    "медиафайл локально для передачи через Telegram.\n\n"
+    "<b>Используя бота, ты подтверждаешь, что:</b>\n"
+    "1. Скачиваешь контент <b>исключительно для личного, некоммерческого "
+    "использования</b> (прослушивание, просмотр).\n"
+    "2. Не будешь распространять, перепродавать, публиковать в открытых "
+    "каналах/платформах или иным образом доводить полученные файлы до "
+    "неопределённого круга лиц.\n"
+    "3. Понимаешь, что авторские права на треки принадлежат их правообладателям, "
+    "а ответственность за правомерность скачивания конкретного трека в твоей "
+    "юрисдикции лежит на тебе как на конечном пользователе.\n"
+    "4. Соблюдаешь Terms of Service SoundCloud, Instagram и TikTok, а также применимое "
+    "законодательство своей страны.\n\n"
+    "Бот не хранит скачанные файлы после отправки и не передаёт их третьим лицам. "
+    "Факт твоего согласия (Telegram user_id, username, дата) сохраняется как "
+    "доказательство принятия этих условий.\n\n"
+    "Если ты — правообладатель и хочешь, чтобы бот перестал отдавать твой "
+    "контент, напиши владельцу бота."
+)
+
+TERMS_PROMPT_TEXT = (
+    "Прежде чем что-то скачать, нужно один раз принять условия использования. "
+    "Это короткий текст про то, что ты используешь бота для личного "
+    "прослушивания и сам отвечаешь за легальность скачиваемого. "
+    "Полный текст: /terms"
+)
 
 
 class _UrlCache:
@@ -133,10 +186,11 @@ def _format_button_label(idx: int, item: SearchResult) -> str:
     return label
 
 
-def build_router(settings: Settings) -> Router:
+def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Router:
     router = Router(name="main")
     webapp_url = settings.webapp_url
     url_cache = _UrlCache()
+    pending_cache = _UrlCache()
     llm: LLMClient | None = None
     if settings.groq_api_key:
         llm = LLMClient(api_key=settings.groq_api_key, model=settings.groq_model)
@@ -168,11 +222,21 @@ def build_router(settings: Settings) -> Router:
 
     def make_track_keyboard(track_url: str) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
-        if webapp_url:
+        low = track_url.lower()
+        if webapp_url and "soundcloud.com" in low:
             rows.append([_player_button(webapp_url, track_url, "🎧 Открыть в плеере")])
-        rows.append(
-            [InlineKeyboardButton(text="Открыть на SoundCloud", url=track_url)]
-        )
+        if "instagram.com" in low or "instagr.am" in low:
+            rows.append(
+                [InlineKeyboardButton(text="Открыть в Instagram", url=track_url)]
+            )
+        elif "tiktok.com" in low:
+            rows.append(
+                [InlineKeyboardButton(text="Открыть в TikTok", url=track_url)]
+            )
+        else:
+            rows.append(
+                [InlineKeyboardButton(text="Открыть на SoundCloud", url=track_url)]
+            )
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     def start_keyboard() -> InlineKeyboardMarkup | None:
@@ -203,29 +267,57 @@ def build_router(settings: Settings) -> Router:
         status: Message,
         url: str,
     ) -> None:
-        """Download `url`, send it as audio to the chat, edit/delete `status`."""
+        """Download `url`, send as audio (SoundCloud) or video (Instagram Reels)."""
+        low = url.lower()
+        is_short_video = (
+            "instagram.com" in low
+            or "instagr.am" in low
+            or "tiktok.com" in low
+        )
+        is_tt = "tiktok.com" in low
+        is_ig = "instagram.com" in low or "instagr.am" in low
         try:
-            track: Track = await download_track(
-                url=url,
-                download_root=settings.download_dir,
-                max_bytes=settings.max_upload_bytes,
-            )
+            if is_short_video:
+                track: Track = await download_short_video(
+                    url=url,
+                    download_root=settings.download_dir,
+                    max_bytes=settings.max_upload_bytes,
+                )
+            else:
+                track = await download_track(
+                    url=url,
+                    download_root=settings.download_dir,
+                    max_bytes=settings.max_upload_bytes,
+                )
         except TrackTooLargeError as exc:
             logger.info("Track too large for %s: %s", url, exc)
             text = (
-                f"Трек весит {exc.size_bytes / 1024 / 1024:.1f} МБ — это больше "
-                f"лимита Telegram (50 МБ). Файл не отправлю."
+                f"Файл весит {exc.size_bytes / 1024 / 1024:.1f} МБ — это больше "
+                f"лимита Telegram (50 МБ). Не отправлю."
             )
-            if webapp_url:
+            if webapp_url and not is_short_video:
                 text += "\n\nНо его можно послушать прямо в плеере 👇"
             await status.edit_text(text, reply_markup=make_track_keyboard(url))
             return
         except SoundCloudError as exc:
             logger.warning("Failed to download %s: %s", url, exc)
-            await status.edit_text(
-                "Не получилось скачать трек. Проверь, что ссылка ведёт на публичный "
-                "трек SoundCloud, и попробуй ещё раз."
-            )
+            if is_tt:
+                hint = (
+                    "Не получилось скачать TikTok. Ссылка могла устареть, ролик приватный "
+                    "или регионально недоступен — попробуй другую ссылку или обнови yt-dlp."
+                )
+            elif is_ig:
+                hint = (
+                    "Не получилось скачать Reels. Часто так бывает, если пост приватный, "
+                    "удалён, возрастные ограничения или Instagram требует авторизацию — "
+                    "попробуй другую ссылку или обнови yt-dlp на сервере."
+                )
+            else:
+                hint = (
+                    "Не получилось скачать трек. Проверь, что ссылка ведёт на публичный "
+                    "трек SoundCloud, и попробуй ещё раз."
+                )
+            await status.edit_text(hint)
             return
         except Exception:
             logger.exception("Unexpected error while handling %s", url)
@@ -233,11 +325,7 @@ def build_router(settings: Settings) -> Router:
             return
 
         try:
-            await chat_message.bot.send_chat_action(
-                chat_message.chat.id, ChatAction.UPLOAD_VOICE
-            )
             bot_tag = await get_bot_tag(chat_message.bot)
-            tag_id3(track.file_path, bot_tag)
             caption = f"{hbold(track.title)}\n{track.artist}"
             if track.is_preview:
                 caption += (
@@ -248,23 +336,84 @@ def build_router(settings: Settings) -> Router:
                 )
             if bot_tag:
                 caption += f"\n\nvia {bot_tag}"
-            await chat_message.answer_audio(
-                audio=FSInputFile(track.file_path, filename=f"{track.title}.mp3"),
-                caption=caption,
-                title=track.title,
-                performer=track.artist,
-                duration=track.actual_duration or track.duration or None,
-                reply_markup=make_track_keyboard(track.webpage_url),
-            )
+
+            if track.is_video:
+                await chat_message.bot.send_chat_action(
+                    chat_message.chat.id, ChatAction.UPLOAD_VIDEO
+                )
+                safe_name = re.sub(r"[^\w\-]+", "_", track.title)[:80] or "video"
+                vext = track.file_path.suffix.lower()
+                if vext not in (".mp4", ".webm"):
+                    vext = ".mp4"
+                await chat_message.answer_video(
+                    video=FSInputFile(track.file_path, filename=f"{safe_name}{vext}"),
+                    caption=caption,
+                    duration=track.actual_duration or track.duration or None,
+                    supports_streaming=True,
+                    reply_markup=make_track_keyboard(track.webpage_url),
+                )
+            else:
+                await chat_message.bot.send_chat_action(
+                    chat_message.chat.id, ChatAction.UPLOAD_VOICE
+                )
+                tag_id3(track.file_path, bot_tag)
+                await chat_message.answer_audio(
+                    audio=FSInputFile(track.file_path, filename=f"{track.title}.mp3"),
+                    caption=caption,
+                    title=track.title,
+                    performer=track.artist,
+                    duration=track.actual_duration or track.duration or None,
+                    reply_markup=make_track_keyboard(track.webpage_url),
+                )
             try:
                 await status.delete()
             except Exception:
                 pass
         except Exception:
-            logger.exception("Failed to send audio for %s", url)
+            logger.exception("Failed to send media for %s", url)
             await status.edit_text("Скачал, но не получилось отправить файл. Попробуй ещё раз.")
         finally:
             track.cleanup()
+
+    def _acceptance_keyboard(key: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Принимаю",
+                        callback_data=f"{CALLBACK_ACCEPT_PREFIX}{key}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="📄 Прочитать полный текст",
+                        callback_data=f"{CALLBACK_ACCEPT_PREFIX}show",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="❌ Не сейчас",
+                        callback_data=CALLBACK_DECLINE,
+                    )
+                ],
+            ]
+        )
+
+    async def _send_acceptance_prompt(target_message: Message, url: str) -> None:
+        key = pending_cache.put(url)
+        await target_message.answer(
+            TERMS_PROMPT_TEXT,
+            reply_markup=_acceptance_keyboard(key),
+            disable_web_page_preview=True,
+        )
+
+    async def _ensure_accepted_or_prompt(message: Message, url: str) -> bool:
+        if not message.from_user:
+            return True
+        if await acceptance_store.has_accepted(message.from_user.id, TERMS_VERSION):
+            return True
+        await _send_acceptance_prompt(message, url)
+        return False
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
@@ -277,6 +426,8 @@ def build_router(settings: Settings) -> Router:
                     "Эта ссылка устарела — поищи трек заново через @"
                     f"{await get_bot_username(message.bot)} или просто пришли название."
                 )
+                return
+            if not await _ensure_accepted_or_prompt(message, url):
                 return
             status = await message.answer("Качаю выбранный трек…")
             await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
@@ -292,6 +443,20 @@ def build_router(settings: Settings) -> Router:
     @router.message(Command("help"))
     async def on_help(message: Message) -> None:
         await message.answer(HELP_TEXT, disable_web_page_preview=True)
+
+    @router.message(Command("terms"))
+    async def on_terms(message: Message) -> None:
+        suffix = ""
+        if message.from_user:
+            accepted = await acceptance_store.has_accepted(
+                message.from_user.id, TERMS_VERSION
+            )
+            suffix = (
+                f"\n\n✅ Ты уже принял эту версию условий ({TERMS_VERSION})."
+                if accepted
+                else "\n\nЯ покажу кнопку «Принимаю» при первом скачивании."
+            )
+        await message.answer(TERMS_TEXT + suffix, disable_web_page_preview=True)
 
     @router.message(Command("player"))
     async def on_player(message: Message) -> None:
@@ -319,8 +484,32 @@ def build_router(settings: Settings) -> Router:
     @router.message(F.text)
     async def on_text(message: Message) -> None:
         text = message.text or ""
+        tt_url = find_tiktok_url(text)
+        if tt_url:
+            if not await _ensure_accepted_or_prompt(message, tt_url):
+                return
+            status = await message.reply(
+                "Качаю TikTok… если не выйдет, попробуй полную ссылку tiktok.com вместо vm."
+            )
+            await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_VIDEO)
+            await deliver_track(message, status, tt_url)
+            return
+
+        ig_url = find_instagram_reel_url(text)
+        if ig_url:
+            if not await _ensure_accepted_or_prompt(message, ig_url):
+                return
+            status = await message.reply(
+                "Качаю Reels… Instagram иногда тормозит, подожди до минуты."
+            )
+            await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_VIDEO)
+            await deliver_track(message, status, ig_url)
+            return
+
         url = find_soundcloud_url(text)
         if url:
+            if not await _ensure_accepted_or_prompt(message, url):
+                return
             status = await message.reply("Качаю трек… это займёт несколько секунд.")
             await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
             await deliver_track(message, status, url)
@@ -417,8 +606,6 @@ def build_router(settings: Settings) -> Router:
                     logger.exception("Inline search (normalized) failed for %r", normalized)
                     results = []
 
-        bot_username = await get_bot_username(iq.bot)
-
         articles: list[InlineQueryResultArticle] = []
         for item in results:
             description_parts: list[str] = []
@@ -436,16 +623,6 @@ def build_router(settings: Settings) -> Router:
                         InlineKeyboardButton(
                             text="🎧 Открыть в плеере",
                             url=f"{webapp_url}/?track={quote(item.url, safe='')}",
-                        )
-                    ]
-                )
-            if bot_username:
-                key = url_cache.put(item.url)
-                kb_rows.append(
-                    [
-                        InlineKeyboardButton(
-                            text="📥 Скачать mp3",
-                            url=f"https://t.me/{bot_username}?start=dl_{key}",
                         )
                     ]
                 )
@@ -487,6 +664,13 @@ def build_router(settings: Settings) -> Router:
             await cq.answer("Список устарел, поищи заново.", show_alert=True)
             return
 
+        if cq.from_user and not await acceptance_store.has_accepted(
+            cq.from_user.id, TERMS_VERSION
+        ):
+            await cq.answer()
+            await _send_acceptance_prompt(cq.message, url)
+            return
+
         await cq.answer("Качаю…")
         try:
             await cq.message.edit_text("Качаю выбранный трек…")
@@ -497,5 +681,59 @@ def build_router(settings: Settings) -> Router:
         )
         # cq.message is the search-results message; reuse it as status placeholder
         await deliver_track(cq.message, cq.message, url)
+
+    @router.callback_query(F.data.startswith(CALLBACK_ACCEPT_PREFIX))
+    async def on_accept(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+
+        payload = cq.data[len(CALLBACK_ACCEPT_PREFIX):]
+
+        if payload == "show":
+            await cq.answer()
+            await cq.message.answer(TERMS_TEXT, disable_web_page_preview=True)
+            return
+
+        url = pending_cache.get(payload)
+        await acceptance_store.record(
+            user_id=cq.from_user.id,
+            username=cq.from_user.username,
+            terms_version=TERMS_VERSION,
+        )
+        await cq.answer("Спасибо! Согласие сохранено.")
+
+        if not url:
+            try:
+                await cq.message.edit_text(
+                    "Согласие принято. Заявка на скачивание устарела — пришли "
+                    "ссылку или название трека ещё раз."
+                )
+            except Exception:
+                pass
+            return
+
+        try:
+            await cq.message.edit_text("Согласие принято. Качаю выбранный трек…")
+        except Exception:
+            pass
+        await cq.message.bot.send_chat_action(
+            cq.message.chat.id, ChatAction.RECORD_VOICE
+        )
+        await deliver_track(cq.message, cq.message, url)
+
+    @router.callback_query(F.data == CALLBACK_DECLINE)
+    async def on_decline(cq: CallbackQuery) -> None:
+        await cq.answer()
+        if not cq.message:
+            return
+        try:
+            await cq.message.edit_text(
+                "Окей, без проблем. Если передумаешь — пришли ссылку или название "
+                "трека снова, я ещё раз покажу условия. Полный текст всегда "
+                "доступен по /terms."
+            )
+        except Exception:
+            pass
 
     return router

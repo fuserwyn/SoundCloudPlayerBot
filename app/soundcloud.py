@@ -19,6 +19,16 @@ SOUNDCLOUD_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+INSTAGRAM_REEL_RE = re.compile(
+    r"https?://(?:www\.)?(?:instagram\.com|instagr\.am)/(?:reel|reels|share/reel)/[A-Za-z0-9_-]+[^\s]*",
+    re.IGNORECASE,
+)
+
+TIKTOK_URL_RE = re.compile(
+    r"https?://(?:(?:www|m|vm|vt|lc)\.)?tiktok\.com/[^\s]+",
+    re.IGNORECASE,
+)
+
 
 class SoundCloudError(Exception):
     """Anything that goes wrong while talking to SoundCloud / yt-dlp."""
@@ -53,6 +63,7 @@ class Track:
     is_preview: bool  # True when SoundCloud only let us grab a short snippet
     thumbnail_url: str | None
     webpage_url: str
+    is_video: bool = False  # True for short vertical video (Reels, TikTok, …), send as video
 
     def cleanup(self) -> None:
         try:
@@ -72,6 +83,22 @@ class Track:
 def find_soundcloud_url(text: str) -> str | None:
     match = SOUNDCLOUD_URL_RE.search(text or "")
     return match.group(0) if match else None
+
+
+def _strip_trailing_junk(url: str) -> str:
+    while url and url[-1] in ").,];\"'":
+        url = url[:-1]
+    return url
+
+
+def find_instagram_reel_url(text: str) -> str | None:
+    match = INSTAGRAM_REEL_RE.search(text or "")
+    return _strip_trailing_junk(match.group(0)) if match else None
+
+
+def find_tiktok_url(text: str) -> str | None:
+    match = TIKTOK_URL_RE.search(text or "")
+    return _strip_trailing_junk(match.group(0)) if match else None
 
 
 def _extract_artist(info: dict[str, Any]) -> str:
@@ -147,6 +174,7 @@ def _download_sync(url: str, work_dir: Path) -> Track:
         is_preview=is_preview,
         thumbnail_url=info.get("thumbnail"),
         webpage_url=str(info.get("webpage_url") or url),
+        is_video=False,
     )
 
 
@@ -157,6 +185,108 @@ def _read_audio_duration(file_path: Path) -> int:
         return int(MP3(file_path).info.length)
     except Exception:
         return 0
+
+
+def _read_video_duration(file_path: Path) -> int:
+    try:
+        from mutagen.mp4 import MP4
+
+        return int(MP4(file_path).info.length)
+    except Exception:
+        return 0
+
+
+def _download_merged_mp4_sync(url: str, work_dir: Path) -> Track:
+    """Download a short public video (Instagram Reels, TikTok, …) as mp4 via yt-dlp."""
+
+    out_template = str(work_dir / "%(title).200B.%(ext)s")
+    opts: dict[str, Any] = {
+        "format": (
+            "bestvideo[ext=mp4][vcodec!=none]+bestaudio[ext=m4a]/"
+            "bestvideo[vcodec!=none]+bestaudio/best[vcodec!=none]/best"
+        ),
+        "outtmpl": out_template,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "merge_output_format": "mp4",
+        "restrictfilenames": True,
+    }
+
+    with YoutubeDL(opts) as ydl:
+        try:
+            info = ydl.extract_info(url, download=True)
+        except DownloadError as exc:
+            raise SoundCloudError(f"yt-dlp failed: {exc}") from exc
+
+    if not info:
+        raise SoundCloudError("yt-dlp returned no info for this URL.")
+
+    if info.get("_type") == "playlist":
+        entries = [e for e in (info.get("entries") or []) if e]
+        if not entries:
+            raise SoundCloudError("Список пуст.")
+        info = entries[0]
+
+    requested = info.get("requested_downloads") or []
+    file_path: Path | None = None
+    if requested:
+        file_path = Path(requested[0].get("filepath") or requested[0].get("_filename"))
+    if file_path is None or not file_path.exists():
+        candidate = info.get("filepath") or info.get("_filename")
+        file_path = Path(candidate) if candidate else None
+    if file_path is None or not file_path.exists():
+        mp4s = sorted(work_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if mp4s:
+            file_path = mp4s[0]
+    if file_path is None or not file_path.exists():
+        webms = sorted(work_dir.glob("*.webm"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if webms:
+            file_path = webms[0]
+    if file_path is None or not file_path.exists():
+        raise SoundCloudError("Скачанный файл не найден на диске.")
+
+    title = str(info.get("title") or file_path.stem)
+    claimed = int(info.get("duration") or 0)
+    actual = _read_video_duration(file_path) or claimed
+    if actual <= 0 and file_path.suffix.lower() == ".webm":
+        actual = claimed
+
+    return Track(
+        file_path=file_path,
+        title=title[:200],
+        artist=_extract_artist(info),
+        duration=claimed,
+        actual_duration=actual,
+        is_preview=False,
+        thumbnail_url=info.get("thumbnail"),
+        webpage_url=str(info.get("webpage_url") or url),
+        is_video=True,
+    )
+
+
+async def download_short_video(
+    url: str,
+    download_root: Path,
+    max_bytes: int,
+) -> Track:
+    """Instagram Reels, TikTok, and similar URLs handled by yt-dlp."""
+
+    work_dir = download_root / uuid.uuid4().hex
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        track = await asyncio.to_thread(_download_merged_mp4_sync, url, work_dir)
+    except Exception:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        raise
+
+    size = track.file_path.stat().st_size
+    if size > max_bytes:
+        track.cleanup()
+        raise TrackTooLargeError(size, max_bytes)
+
+    return track
 
 
 def _search_sync(query: str, limit: int) -> list[SearchResult]:

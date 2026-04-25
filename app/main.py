@@ -9,6 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from app.config import load_settings
+from app.db import AcceptanceStore
 from app.handlers import build_router
 
 
@@ -27,12 +28,15 @@ async def run() -> None:
 
     settings = load_settings()
 
+    acceptance_store = AcceptanceStore(settings.database_url, settings.db_path)
+    await acceptance_store.init()
+
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
-    dp.include_router(build_router(settings))
+    dp.include_router(build_router(settings, acceptance_store))
 
     me = await bot.get_me()
     log.info("Bot @%s (id=%s) started. Polling for updates…", me.username, me.id)
@@ -44,6 +48,7 @@ async def run() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, allowed_updates=allowed)
     finally:
+        await acceptance_store.close()
         await bot.session.close()
 
 
