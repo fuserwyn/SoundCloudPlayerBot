@@ -283,35 +283,7 @@ def build_router(settings: Settings) -> Router:
             return
 
         status = await message.reply(f"Ищу «{_truncate(query, 80)}»…")
-        effective = await _normalize_for_search(status, query)
-        await _run_search_into(status, effective)
 
-    async def _normalize_for_search(status: Message, query: str) -> str:
-        """If the LLM is available, run query through it; fall back to the original on any error.
-
-        Updates the status message when the AI rewrote the query so the user
-        sees what's actually being searched.
-        """
-        if not llm:
-            return query
-        try:
-            normalized = await llm.normalize_query(query)
-        except LLMUnavailable as exc:
-            logger.warning("LLM normalize failed for %r: %s", query, exc)
-            return query
-        if not normalized:
-            return query
-        if normalized.lower() == query.lower():
-            return query
-        try:
-            await status.edit_text(
-                f"Ищу «{_truncate(normalized, 60)}» (от тебя «{_truncate(query, 40)}»)…"
-            )
-        except Exception:
-            pass
-        return normalized
-
-    async def _run_search_into(status: Message, query: str) -> None:
         try:
             results = await search_tracks(query, limit=SEARCH_LIMIT)
         except SoundCloudError as exc:
@@ -323,16 +295,50 @@ def build_router(settings: Settings) -> Router:
             await status.edit_text("Что-то сломалось при поиске. Попробуй позже.")
             return
 
-        if not results:
+        if results:
             await status.edit_text(
-                "Ничего не нашёл. Попробуй переформулировать или пришли прямую ссылку."
+                f"Нашёл {len(results)} треков. Выбери, что скачать:",
+                reply_markup=make_search_keyboard(results),
             )
             return
 
+        if llm:
+            normalized = await _try_normalize(query)
+            if normalized and normalized.lower() != query.lower():
+                try:
+                    await status.edit_text(
+                        f"Не нашёл «{_truncate(query, 40)}». Пробую «{_truncate(normalized, 60)}»…"
+                    )
+                except Exception:
+                    pass
+                try:
+                    results = await search_tracks(normalized, limit=SEARCH_LIMIT)
+                except SoundCloudError as exc:
+                    logger.warning("Search failed for %r: %s", normalized, exc)
+                    results = []
+                except Exception:
+                    logger.exception("Unexpected search error for %r", normalized)
+                    results = []
+                if results:
+                    await status.edit_text(
+                        f"По «{_truncate(query, 40)}» ничего не нашёл, "
+                        f"но по «{_truncate(normalized, 60)}» нашёл {len(results)}:",
+                        reply_markup=make_search_keyboard(results),
+                    )
+                    return
+
         await status.edit_text(
-            f"Нашёл {len(results)} треков. Выбери, что скачать:",
-            reply_markup=make_search_keyboard(results),
+            "Ничего не нашёл. Попробуй переформулировать или пришли прямую ссылку."
         )
+
+    async def _try_normalize(query: str) -> str | None:
+        if not llm:
+            return None
+        try:
+            return await llm.normalize_query(query)
+        except LLMUnavailable as exc:
+            logger.warning("LLM normalize failed for %r: %s", query, exc)
+            return None
 
     @router.inline_query()
     async def on_inline(iq: InlineQuery) -> None:
