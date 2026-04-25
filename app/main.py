@@ -37,9 +37,12 @@ async def run() -> None:
     me = await bot.get_me()
     log.info("Bot @%s (id=%s) started. Polling for updates…", me.username, me.id)
 
+    allowed = dp.resolve_used_update_types()
+    log.info("Subscribed update types: %s", allowed)
+
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        await dp.start_polling(bot, allowed_updates=allowed)
     finally:
         await bot.session.close()
 
