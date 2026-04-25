@@ -48,7 +48,9 @@ class Track:
     file_path: Path
     title: str
     artist: str
-    duration: int  # seconds
+    duration: int  # seconds (from SoundCloud metadata, i.e. full track length)
+    actual_duration: int  # seconds (length of the downloaded file)
+    is_preview: bool  # True when SoundCloud only let us grab a short snippet
     thumbnail_url: str | None
     webpage_url: str
 
@@ -133,14 +135,28 @@ def _download_sync(url: str, work_dir: Path) -> Track:
         file_path = mp3s[0]
 
     title = str(info.get("title") or file_path.stem)
+    claimed = int(info.get("duration") or 0)
+    actual = _read_audio_duration(file_path) or claimed
+    is_preview = bool(claimed and actual and actual < claimed * 0.6)
     return Track(
         file_path=file_path,
         title=title,
         artist=_extract_artist(info),
-        duration=int(info.get("duration") or 0),
+        duration=claimed,
+        actual_duration=actual,
+        is_preview=is_preview,
         thumbnail_url=info.get("thumbnail"),
         webpage_url=str(info.get("webpage_url") or url),
     )
+
+
+def _read_audio_duration(file_path: Path) -> int:
+    try:
+        from mutagen.mp3 import MP3
+
+        return int(MP3(file_path).info.length)
+    except Exception:
+        return 0
 
 
 def _search_sync(query: str, limit: int) -> list[SearchResult]:

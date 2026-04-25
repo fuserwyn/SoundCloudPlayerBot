@@ -239,6 +239,13 @@ def build_router(settings: Settings) -> Router:
             bot_tag = await get_bot_tag(chat_message.bot)
             tag_id3(track.file_path, bot_tag)
             caption = f"{hbold(track.title)}\n{track.artist}"
+            if track.is_preview:
+                caption += (
+                    f"\n\n⚠️ Это превью {track.actual_duration} сек "
+                    f"(полный трек {track.duration // 60}:{track.duration % 60:02d}). "
+                    f"Лейбл закрыл полную версию через SoundCloud Go+. "
+                    f"Поищи неофициальную загрузку — там обычно полный трек."
+                )
             if bot_tag:
                 caption += f"\n\nvia {bot_tag}"
             await chat_message.answer_audio(
@@ -246,7 +253,7 @@ def build_router(settings: Settings) -> Router:
                 caption=caption,
                 title=track.title,
                 performer=track.artist,
-                duration=track.duration or None,
+                duration=track.actual_duration or track.duration or None,
                 reply_markup=make_track_keyboard(track.webpage_url),
             )
             try:
