@@ -1,0 +1,22 @@
+services:
+  bot:
+    build: .
+    image: soundcloud-player-bot:latest
+    container_name: soundcloud-player-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DOWNLOAD_DIR: /data/downloads
+      TZ: Europe/Moscow
+    volumes:
+      - downloads:/data/downloads
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.gethostbyname('api.telegram.org')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  downloads:
