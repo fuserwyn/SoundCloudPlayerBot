@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f12" />
+    <title>SoundCloud Player</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://w.soundcloud.com/player/api.js"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <div class="brand">
+          <span class="brand__dot"></span>
+          <span class="brand__name">SoundCloud Player</span>
+        </div>
+        <button id="closeBtn" class="ghost-btn" type="button" aria-label="Закрыть">×</button>
+      </header>
+
+      <section id="empty" class="empty hidden">
+        <h1>Вставь ссылку на трек</h1>
+        <p>Любая публичная ссылка с soundcloud.com.</p>
+      </section>
+
+      <section id="playerWrap" class="player hidden">
+        <div class="player__frame">
+          <iframe
+            id="scPlayer"
+            title="SoundCloud Player"
+            width="100%"
+            height="465"
+            scrolling="no"
+            frameborder="no"
+            allow="autoplay"
+            src="about:blank"
+          ></iframe>
+        </div>
+
+        <div id="meta" class="meta">
+          <div class="meta__title" id="metaTitle">Загружаю…</div>
+          <div class="meta__artist" id="metaArtist"></div>
+        </div>
+
+        <div class="controls">
+          <button id="prevBtn" class="ctrl-btn" type="button" aria-label="-15s">«15</button>
+          <button id="playBtn" class="ctrl-btn ctrl-btn--primary" type="button" aria-label="Play/Pause">▶</button>
+          <button id="nextBtn" class="ctrl-btn" type="button" aria-label="+15s">15»</button>
+        </div>
+
+        <div class="loader">
+          <input
+            id="urlInput"
+            type="url"
+            inputmode="url"
+            placeholder="https://soundcloud.com/..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="loadBtn" type="button">Загрузить</button>
+        </div>
+      </section>
+
+      <footer class="hint">
+        Плеер использует официальный SoundCloud Widget. Воспроизведение идёт прямо с soundcloud.com.
+      </footer>
+    </main>
+
+    <script src="player.js"></script>
+  </body>
+</html>

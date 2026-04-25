@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+import logging
+import os
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Settings:
+    bot_token: str
+    download_dir: Path
+    webapp_url: str | None
+    max_upload_bytes: int = 50 * 1024 * 1024  # Telegram Bot API hard limit for audio
+    request_timeout: int = 120
+
+
+def _read_webapp_url(wait_seconds: int) -> str | None:
+    """Resolve the Mini App URL.
+
+    Priority:
+      1. WEBAPP_URL env var (explicit override, e.g. for production hosting).
+      2. WEBAPP_URL_FILE path (written by the tunnel sidecar). We wait up
+         to `wait_seconds` for the file to appear so the bot survives
+         compose start-up ordering.
+    """
+
+    explicit = os.getenv("WEBAPP_URL", "").strip()
+    if explicit:
+        logger.info("Using WEBAPP_URL from env: %s", explicit)
+        return explicit.rstrip("/")
+
+    url_file_env = os.getenv("WEBAPP_URL_FILE", "").strip()
+    if not url_file_env:
+        logger.info("WEBAPP_URL / WEBAPP_URL_FILE not set, Mini App disabled.")
+        return None
+
+    url_file = Path(url_file_env)
+    deadline = time.time() + max(0, wait_seconds)
+    logged_waiting = False
+    while time.time() < deadline:
+        if url_file.exists():
+            value = url_file.read_text().strip()
+            if value:
+                logger.info("Picked up Mini App URL from %s: %s", url_file, value)
+                return value.rstrip("/")
+        if not logged_waiting:
+            logger.info("Waiting for tunnel URL at %s ...", url_file)
+            logged_waiting = True
+        time.sleep(1)
+
+    logger.warning(
+        "Tunnel URL file %s did not appear within %ds, Mini App disabled.",
+        url_file,
+        wait_seconds,
+    )
+    return None
+
+
+def load_settings() -> Settings:
+    token = os.getenv("TELEGRAM_API_KEY")
+    if not token:
+        raise RuntimeError(
+            "TELEGRAM_API_KEY is not set. Put it into .env or pass as env var."
+        )
+
+    download_dir = Path(os.getenv("DOWNLOAD_DIR", "/tmp/scbot"))
+    download_dir.mkdir(parents=True, exist_ok=True)
+
+    wait_seconds = int(os.getenv("WEBAPP_URL_WAIT_SECONDS", "120"))
+    webapp_url = _read_webapp_url(wait_seconds)
+
+    return Settings(
+        bot_token=token,
+        download_dir=download_dir,
+        webapp_url=webapp_url,
+    )
