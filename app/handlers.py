@@ -39,11 +39,9 @@ logger = logging.getLogger(__name__)
 WELCOME_TEXT = (
     "Привет! Я работаю с SoundCloud:\n\n"
     "1) Кинь ссылку на трек — пришлю mp3 с обложкой.\n"
-    "2) Напиши название — найду первые 10 совпадений.\n"
+    "2) Напиши название — найду первые 10 совпадений. Если запрос на русском или с "
+    "опечатками, AI сам нормализует его перед поиском.\n"
     "3) Открой Mini App ниже — встроенный плеер с поиском и виджетом.\n\n"
-    "С AI (если включён):\n"
-    "/smart — нормализую кривой запрос (русские названия в латиницу, опечатки) и поищу.\n"
-    "/playlist — собери плейлист по описанию настроения, например: <code>/playlist лоу-фай для дождливого утра</code>.\n\n"
     "Команды:\n"
     "/start — это сообщение\n"
     "/player — открыть плеер\n"
@@ -55,11 +53,10 @@ HELP_TEXT = (
     "• https://soundcloud.com/&lt;artist&gt;/&lt;track&gt;\n"
     "• https://m.soundcloud.com/...\n"
     "• https://on.soundcloud.com/&lt;short&gt;\n\n"
-    "Поиск: просто пришли название (например, «forss flickermood») — выберу из топ-10.\n\n"
-    "AI-поиск (если настроен GROQ_API_KEY):\n"
-    "• <code>/smart психоцикл амба</code> — LLM нормализует запрос перед поиском.\n"
-    "• <code>/playlist меланхоличный синтвейв для прогулки ночью</code> — LLM придумает 8 треков, "
-    "бот найдёт каждый на SoundCloud.\n\n"
+    "Поиск: просто пришли название трека (например, «forss flickermood» или "
+    "«психоцикл амба») — выберу из топ-10.\n"
+    "Если на сервере включён GROQ_API_KEY, перед поиском AI сам нормализует запрос: "
+    "переведёт русские названия в латиницу и поправит опечатки.\n\n"
     "Скачивание: лимит Telegram на аудио от ботов — 50 МБ.\n"
     "Mini App плеер: открывается прямо в Telegram, без скачивания."
 )
@@ -265,97 +262,6 @@ def build_router(settings: Settings) -> Router:
             return
         await _do_search(message, query)
 
-    @router.message(Command("smart"))
-    async def on_smart_cmd(message: Message) -> None:
-        if not llm:
-            await message.reply(
-                "AI-поиск выключен — на сервере не задан GROQ_API_KEY.\n"
-                "Можешь использовать обычный /search или просто прислать название."
-            )
-            return
-        query = (message.text or "").partition(" ")[2].strip()
-        if not query:
-            await message.reply(
-                "Использование: /smart <запрос>\n"
-                "Например: /smart психоцикл амба"
-            )
-            return
-
-        status = await message.reply(f"Думаю как лучше найти «{_truncate(query, 60)}»…")
-        try:
-            normalized = await llm.normalize_query(query)
-        except LLMUnavailable as exc:
-            logger.warning("LLM normalize failed: %s", exc)
-            normalized = query
-
-        if normalized and normalized.lower() != query.lower():
-            await status.edit_text(
-                f"Ищу «{_truncate(normalized, 60)}» (от тебя «{_truncate(query, 40)}»)…"
-            )
-        else:
-            await status.edit_text(f"Ищу «{_truncate(normalized or query, 60)}»…")
-        await _run_search_into(status, normalized or query)
-
-    @router.message(Command("playlist"))
-    async def on_playlist_cmd(message: Message) -> None:
-        if not llm:
-            await message.reply(
-                "AI-плейлисты выключены — на сервере не задан GROQ_API_KEY."
-            )
-            return
-        prompt = (message.text or "").partition(" ")[2].strip()
-        if not prompt:
-            await message.reply(
-                "Использование: /playlist <описание>\n"
-                "Например: /playlist лоу-фай для дождливого утра"
-            )
-            return
-
-        status = await message.reply(
-            f"Собираю плейлист под «{_truncate(prompt, 60)}»…"
-        )
-        try:
-            track_names = await llm.suggest_tracks(prompt, n=8)
-        except LLMUnavailable as exc:
-            logger.warning("LLM playlist failed: %s", exc)
-            await status.edit_text(
-                "AI временно недоступен (rate-limit или ошибка ключа). Попробуй позже."
-            )
-            return
-
-        if not track_names:
-            await status.edit_text(
-                "AI ничего конкретного не предложил. Попробуй другую формулировку."
-            )
-            return
-
-        await status.edit_text(
-            f"AI предложил {len(track_names)} треков. Ищу каждый на SoundCloud…"
-        )
-
-        found: list[SearchResult] = []
-        for name in track_names:
-            try:
-                results = await search_tracks(name, limit=1)
-            except Exception:
-                continue
-            if results:
-                found.append(results[0])
-
-        suggested_block = "\n".join(f"• {n}" for n in track_names)
-        if not found:
-            await status.edit_text(
-                f"AI придумал треки, но ни одного не нашёл на SoundCloud:\n\n{suggested_block}"
-            )
-            return
-
-        await status.edit_text(
-            f"Плейлист «{_truncate(prompt, 80)}»\n\n"
-            f"AI предложил:\n{suggested_block}\n\n"
-            f"Нашёл {len(found)} из {len(track_names)} на SoundCloud:",
-            reply_markup=make_search_keyboard(found),
-        )
-
     @router.message(F.text)
     async def on_text(message: Message) -> None:
         text = message.text or ""
@@ -377,7 +283,33 @@ def build_router(settings: Settings) -> Router:
             return
 
         status = await message.reply(f"Ищу «{_truncate(query, 80)}»…")
-        await _run_search_into(status, query)
+        effective = await _normalize_for_search(status, query)
+        await _run_search_into(status, effective)
+
+    async def _normalize_for_search(status: Message, query: str) -> str:
+        """If the LLM is available, run query through it; fall back to the original on any error.
+
+        Updates the status message when the AI rewrote the query so the user
+        sees what's actually being searched.
+        """
+        if not llm:
+            return query
+        try:
+            normalized = await llm.normalize_query(query)
+        except LLMUnavailable as exc:
+            logger.warning("LLM normalize failed for %r: %s", query, exc)
+            return query
+        if not normalized:
+            return query
+        if normalized.lower() == query.lower():
+            return query
+        try:
+            await status.edit_text(
+                f"Ищу «{_truncate(normalized, 60)}» (от тебя «{_truncate(query, 40)}»)…"
+            )
+        except Exception:
+            pass
+        return normalized
 
     async def _run_search_into(status: Message, query: str) -> None:
         try:
