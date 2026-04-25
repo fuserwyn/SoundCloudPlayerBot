@@ -141,19 +141,30 @@ def build_router(settings: Settings) -> Router:
     if settings.groq_api_key:
         llm = LLMClient(api_key=settings.groq_api_key, model=settings.groq_model)
 
-    bot_tag_cache: dict[str, str] = {}
+    bot_info_cache: dict[str, str] = {}
 
-    async def get_bot_tag(bot) -> str:
-        cached = bot_tag_cache.get("tag")
-        if cached:
-            return cached
+    async def _get_bot_info(bot) -> tuple[str, str]:
+        """Return (username_without_at, tag_with_at), cached after first call."""
+        cached_username = bot_info_cache.get("username")
+        if cached_username is not None:
+            return cached_username, bot_info_cache.get("tag", "")
         try:
             me = await bot.get_me()
-            tag = f"@{me.username}" if me.username else ""
+            username = me.username or ""
         except Exception:
-            tag = ""
-        bot_tag_cache["tag"] = tag
+            username = ""
+        tag = f"@{username}" if username else ""
+        bot_info_cache["username"] = username
+        bot_info_cache["tag"] = tag
+        return username, tag
+
+    async def get_bot_tag(bot) -> str:
+        _, tag = await _get_bot_info(bot)
         return tag
+
+    async def get_bot_username(bot) -> str:
+        username, _ = await _get_bot_info(bot)
+        return username
 
     def make_track_keyboard(track_url: str) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
@@ -250,6 +261,21 @@ def build_router(settings: Settings) -> Router:
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
+        payload = (message.text or "").partition(" ")[2].strip()
+        if payload.startswith("dl_"):
+            key = payload[3:]
+            url = url_cache.get(key)
+            if not url:
+                await message.answer(
+                    "Эта ссылка устарела — поищи трек заново через @"
+                    f"{await get_bot_username(message.bot)} или просто пришли название."
+                )
+                return
+            status = await message.answer("Качаю выбранный трек…")
+            await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
+            await deliver_track(message, status, url)
+            return
+
         await message.answer(
             WELCOME_TEXT,
             disable_web_page_preview=True,
@@ -365,12 +391,7 @@ def build_router(settings: Settings) -> Router:
     async def on_inline(iq: InlineQuery) -> None:
         query = (iq.query or "").strip()
         if len(query) < 2:
-            await iq.answer(
-                results=[],
-                cache_time=5,
-                is_personal=False,
-                button=None,
-            )
+            await iq.answer(results=[], cache_time=5, is_personal=False)
             return
 
         try:
@@ -379,6 +400,17 @@ def build_router(settings: Settings) -> Router:
             logger.exception("Inline search failed for %r", query)
             await iq.answer([], cache_time=5)
             return
+
+        if not results and llm:
+            normalized = await _try_normalize(query)
+            if normalized and normalized.lower() != query.lower():
+                try:
+                    results = await search_tracks(normalized, limit=20)
+                except Exception:
+                    logger.exception("Inline search (normalized) failed for %r", normalized)
+                    results = []
+
+        bot_username = await get_bot_username(iq.bot)
 
         articles: list[InlineQueryResultArticle] = []
         for item in results:
@@ -397,6 +429,16 @@ def build_router(settings: Settings) -> Router:
                         InlineKeyboardButton(
                             text="🎧 Открыть в плеере",
                             url=f"{webapp_url}/?track={quote(item.url, safe='')}",
+                        )
+                    ]
+                )
+            if bot_username:
+                key = url_cache.put(item.url)
+                kb_rows.append(
+                    [
+                        InlineKeyboardButton(
+                            text="📥 Скачать mp3",
+                            url=f"https://t.me/{bot_username}?start=dl_{key}",
                         )
                     ]
                 )
