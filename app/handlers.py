@@ -32,6 +32,7 @@ from app.soundcloud import (
     download_track,
     find_soundcloud_url,
     search_tracks,
+    tag_id3,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,20 @@ def build_router(settings: Settings) -> Router:
     if settings.groq_api_key:
         llm = LLMClient(api_key=settings.groq_api_key, model=settings.groq_model)
 
+    bot_tag_cache: dict[str, str] = {}
+
+    async def get_bot_tag(bot) -> str:
+        cached = bot_tag_cache.get("tag")
+        if cached:
+            return cached
+        try:
+            me = await bot.get_me()
+            tag = f"@{me.username}" if me.username else ""
+        except Exception:
+            tag = ""
+        bot_tag_cache["tag"] = tag
+        return tag
+
     def make_track_keyboard(track_url: str) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
         if webapp_url:
@@ -210,7 +225,11 @@ def build_router(settings: Settings) -> Router:
             await chat_message.bot.send_chat_action(
                 chat_message.chat.id, ChatAction.UPLOAD_VOICE
             )
+            bot_tag = await get_bot_tag(chat_message.bot)
+            tag_id3(track.file_path, bot_tag)
             caption = f"{hbold(track.title)}\n{track.artist}"
+            if bot_tag:
+                caption += f"\n\nvia {bot_tag}"
             await chat_message.answer_audio(
                 audio=FSInputFile(track.file_path, filename=f"{track.title}.mp3"),
                 caption=caption,

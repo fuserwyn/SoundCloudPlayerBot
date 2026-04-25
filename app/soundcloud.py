@@ -192,6 +192,31 @@ async def search_tracks(query: str, limit: int = 10) -> list[SearchResult]:
     return await asyncio.to_thread(_search_sync, query, limit)
 
 
+def tag_id3(file_path: Path, bot_tag: str) -> None:
+    """Stamp the mp3 with bot attribution in COMM and TENC ID3 frames.
+
+    Best-effort: any failure is logged but never raised, since attribution
+    is non-essential and we don't want to block delivery of the file.
+    """
+    if not bot_tag:
+        return
+    try:
+        from mutagen.id3 import COMM, ID3, TENC, ID3NoHeaderError
+
+        try:
+            tags = ID3(file_path)
+        except ID3NoHeaderError:
+            tags = ID3()
+        comment = f"Downloaded via {bot_tag}"
+        tags.delall("COMM")
+        tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
+        tags.delall("TENC")
+        tags.add(TENC(encoding=3, text=bot_tag))
+        tags.save(file_path, v2_version=3)
+    except Exception:
+        logger.warning("Failed to stamp ID3 tag on %s", file_path, exc_info=True)
+
+
 async def download_track(
     url: str,
     download_root: Path,
