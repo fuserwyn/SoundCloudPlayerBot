@@ -15,12 +15,15 @@ class LLMUnavailable(Exception):
 
 
 _NORMALIZE_SYSTEM = (
-    "You normalise a user music search request into the best query for SoundCloud's "
-    "search engine. Rules:\n"
-    "- If the request is in Russian or another non-Latin language and the artist/title "
-    "is likely released under a Latin name, transliterate or translate it.\n"
-    "- Fix obvious typos.\n"
-    "- Keep it short: artist + track name only when known, otherwise just the topic.\n"
+    "You clean up a user's music search query before it is sent to SoundCloud search. "
+    "Rules:\n"
+    "- KEEP THE ORIGINAL LANGUAGE AND SCRIPT. If the user wrote in Russian (Cyrillic), "
+    "answer in Russian (Cyrillic). If in English, answer in English. Never transliterate "
+    "or translate between languages.\n"
+    "- Fix obvious typos and spacing issues.\n"
+    "- Keep it short: artist + track name when you can recognise them, otherwise just "
+    "tidy the user's words.\n"
+    "- If the query already looks clean, return it unchanged.\n"
     "- Output ONLY the final search string. No quotes, no explanations, no leading text."
 )
 
