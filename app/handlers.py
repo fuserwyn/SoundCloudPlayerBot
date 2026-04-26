@@ -6,7 +6,7 @@ from collections import OrderedDict
 from urllib.parse import quote
 
 from aiogram import F, Router
-from aiogram.enums import ChatAction
+from aiogram.enums import ChatAction, ChatType
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -429,6 +429,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             status = await message.reply("Качаю трек… это займёт несколько секунд.")
             await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
             await deliver_track(message, status, url)
+            return
+
+        # В группах/каналах не рассматривать произвольный текст как поиск — иначе бот
+        # реагирует на каждое сообщение в чате. Поиск там: /search, либо через @ в inline.
+        if message.chat.type != ChatType.PRIVATE:
             return
 
         await _do_search(message, text)
