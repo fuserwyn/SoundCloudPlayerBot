@@ -523,6 +523,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                     results = []
 
         articles: list[InlineQueryResultArticle] = []
+        bot_username = await get_bot_username(iq.bot)
         for item in results:
             description_parts: list[str] = []
             if item.artist:
@@ -545,6 +546,16 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             kb_rows.append(
                 [InlineKeyboardButton(text="Открыть на SoundCloud", url=item.url)]
             )
+            if bot_username:
+                dl_key = url_cache.put(item.url)
+                kb_rows.append(
+                    [
+                        InlineKeyboardButton(
+                            text="Скачать мп3",
+                            url=f"https://t.me/{bot_username}?start=dl_{dl_key}",
+                        )
+                    ]
+                )
             keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
             articles.append(
