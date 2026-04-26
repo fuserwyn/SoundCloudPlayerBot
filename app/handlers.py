@@ -41,9 +41,10 @@ logger = logging.getLogger(__name__)
 WELCOME_TEXT = (
     "Привет! Я работаю с SoundCloud:\n\n"
     "1) Кинь ссылку на трек SoundCloud — пришлю mp3 с обложкой.\n"
-    "2) Напиши название — найду первые 10 совпадений. Если не нашлось, AI попробует "
-    "угадать артиста (опечатки, фонетика — например «пинк флойд камфортабли намб») "
-    "и поищет ещё раз.\n"
+    "2) Напиши название — найду первые 10 совпадений; после выбора можно открыть в "
+    "плеере, на SoundCloud или скачать MP3. Если не нашлось, AI попробует угадать "
+    "артиста (опечатки, фонетика — например «пинк флойд камфортабли намб») и поищет "
+    "ещё раз.\n"
     "3) Открой Mini App ниже — встроенный плеер с поиском и виджетом.\n"
     "4) В любом чате через @бот можно быстро найти трек и отправить ссылку — "
     "там только прослушивание в плеере или на SoundCloud; mp3 — только в этом чате "
@@ -60,8 +61,8 @@ HELP_TEXT = (
     "• https://soundcloud.com/&lt;artist&gt;/&lt;track&gt;\n"
     "• https://m.soundcloud.com/...\n"
     "• https://on.soundcloud.com/&lt;short&gt;\n\n"
-    "Поиск: просто пришли название трека (например, «forss flickermood» или "
-    "«психоцикл амба») — выберу из топ-10.\n"
+    "Поиск: пришли название (например, «forss flickermood») — выберу из топ-10, "
+    "потом плеер, SoundCloud или скачать.\n"
     "Если ничего не нашлось и на сервере включён GROQ_API_KEY, AI попробует узнать "
     "артиста (даже если ты написал «пинк флойд камфортабли намб» — поищет «pink floyd "
     "comfortably numb») и поищет ещё раз.\n\n"
@@ -76,6 +77,7 @@ HELP_TEXT = (
 )
 
 CALLBACK_PICK_PREFIX = "pick:"
+CALLBACK_DOWNLOAD_PREFIX = "dld:"  # скачать MP3 после выбора в списке поиска
 CALLBACK_ACCEPT_PREFIX = "accept:"
 CALLBACK_DECLINE = "decline"
 MAX_BUTTON_TEXT = 60
@@ -141,6 +143,26 @@ class _UrlCache:
         return url
 
 
+class _PickMetaCache:
+    """Название/артист для строки в списке — чтобы после выбора показать подпись к кнопкам."""
+
+    def __init__(self, max_items: int = SEARCH_CACHE_SIZE) -> None:
+        self._items: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        self._max = max_items
+
+    def set(self, key: str, title: str, artist: str) -> None:
+        self._items[key] = (title, artist)
+        self._items.move_to_end(key)
+        while len(self._items) > self._max:
+            self._items.popitem(last=False)
+
+    def get(self, key: str) -> tuple[str, str] | None:
+        t = self._items.get(key)
+        if t is not None:
+            self._items.move_to_end(key)
+        return t
+
+
 def _player_button(webapp_url: str, track_url: str | None, label: str) -> InlineKeyboardButton:
     if track_url:
         url = f"{webapp_url}/?track={quote(track_url, safe='')}"
@@ -182,6 +204,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
     router = Router(name="main")
     webapp_url = settings.webapp_url
     url_cache = _UrlCache()
+    pick_meta = _PickMetaCache()
     pending_cache = _UrlCache()
     llm: LLMClient | None = None
     if settings.groq_api_key:
@@ -234,6 +257,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         rows: list[list[InlineKeyboardButton]] = []
         for idx, item in enumerate(results, start=1):
             key = url_cache.put(item.url)
+            pick_meta.set(
+                key,
+                (item.title or "Без названия").strip(),
+                (item.artist or "").strip(),
+            )
             rows.append(
                 [
                     InlineKeyboardButton(
@@ -242,6 +270,27 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                     )
                 ]
             )
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def make_post_pick_keyboard(cache_key: str) -> InlineKeyboardMarkup | None:
+        """Плеер, SoundCloud, скачивание — после нажатия на строку в поиске."""
+        track_url = url_cache.get(cache_key)
+        if not track_url:
+            return None
+        rows: list[list[InlineKeyboardButton]] = []
+        if webapp_url:
+            rows.append([_player_button(webapp_url, track_url, "🎧 Открыть в плеере")])
+        rows.append(
+            [InlineKeyboardButton(text="Открыть на SoundCloud", url=track_url)]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Скачать мп3",
+                    callback_data=f"{CALLBACK_DOWNLOAD_PREFIX}{cache_key}",
+                )
+            ]
+        )
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     async def deliver_track(
@@ -461,7 +510,8 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
 
         if results:
             await status.edit_text(
-                f"Нашёл {len(results)} треков. Выбери, что скачать:",
+                f"Нашёл {len(results)} треков. Нажми на вариант — дальше можно "
+                f"открыть в плеере, на SoundCloud или скачать MP3.",
                 reply_markup=make_search_keyboard(results),
             )
             return
@@ -486,7 +536,8 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 if results:
                     await status.edit_text(
                         f"По «{_truncate(query, 40)}» ничего не нашёл, "
-                        f"но по «{_truncate(normalized, 60)}» нашёл {len(results)}:",
+                        f"но по «{_truncate(normalized, 60)}» нашёл {len(results)}. "
+                        f"Нажми на вариант — плеер, SoundCloud или скачать MP3.",
                         reply_markup=make_search_keyboard(results),
                     )
                     return
@@ -595,23 +646,56 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not url:
             await cq.answer("Список устарел, поищи заново.", show_alert=True)
             return
+        pick_kb = make_post_pick_keyboard(key)
+        if not pick_kb:
+            await cq.answer("Список устарел, поищи заново.", show_alert=True)
+            return
 
-        if cq.from_user and not await acceptance_store.has_accepted(
+        meta = pick_meta.get(key)
+        title, artist = meta if meta else (None, None)
+        if title:
+            lines: list[str] = [title]
+            if artist:
+                lines.append(artist)
+        else:
+            lines = ["Трек"]
+        text = (
+            "\n".join(lines)
+            + "\n\nОткрой плеер, SoundCloud или скачай MP3 — кнопки ниже."
+        )
+        await cq.answer()
+        try:
+            await cq.message.edit_text(text, reply_markup=pick_kb)
+        except Exception:
+            try:
+                await cq.message.answer(text, reply_markup=pick_kb)
+            except Exception:
+                pass
+
+    @router.callback_query(F.data.startswith(CALLBACK_DOWNLOAD_PREFIX))
+    async def on_post_pick_download(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        key = cq.data[len(CALLBACK_DOWNLOAD_PREFIX):]
+        url = url_cache.get(key)
+        if not url:
+            await cq.answer("Ссылка устарела, поищи заново.", show_alert=True)
+            return
+        if not await acceptance_store.has_accepted(
             cq.from_user.id, TERMS_VERSION
         ):
             await cq.answer()
             await _send_acceptance_prompt(cq.message, url)
             return
-
         await cq.answer("Качаю…")
         try:
-            await cq.message.edit_text("Качаю выбранный трек…")
+            await cq.message.edit_text("Качаю трек…")
         except Exception:
             pass
         await cq.message.bot.send_chat_action(
             cq.message.chat.id, ChatAction.RECORD_VOICE
         )
-        # cq.message is the search-results message; reuse it as status placeholder
         await deliver_track(cq.message, cq.message, url)
 
     @router.callback_query(F.data.startswith(CALLBACK_ACCEPT_PREFIX))
