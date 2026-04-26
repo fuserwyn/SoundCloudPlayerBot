@@ -6,6 +6,7 @@ from collections import OrderedDict
 from urllib.parse import quote
 
 from aiogram import F, Router
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram.enums import ChatAction, ChatType
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -185,6 +186,23 @@ def _truncate(text: str, limit: int = MAX_BUTTON_TEXT) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+class UserActivityMiddleware(BaseMiddleware):
+    """Считает заходы: upsert в БД и кладёт актуальный request_count в data."""
+
+    def __init__(self, store: AcceptanceStore) -> None:
+        self._store = store
+
+    async def __call__(self, handler, event, data):
+        user = getattr(event, "from_user", None)
+        if user is not None and not user.is_bot:
+            data["user_request_count"] = await self._store.record_user_request(
+                user.id, user.username
+            )
+        else:
+            data["user_request_count"] = None
+        return await handler(event, data)
+
+
 def _format_button_label(idx: int, item: SearchResult) -> str:
     parts: list[str] = [f"{idx}."]
     if item.artist:
@@ -202,6 +220,10 @@ def _format_button_label(idx: int, item: SearchResult) -> str:
 
 def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Router:
     router = Router(name="main")
+    _act = UserActivityMiddleware(acceptance_store)
+    router.message.middleware(_act)
+    router.callback_query.middleware(_act)
+    router.inline_query.middleware(_act)
     webapp_url = settings.webapp_url
     url_cache = _UrlCache()
     pick_meta = _PickMetaCache()
@@ -403,7 +425,10 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         return False
 
     @router.message(CommandStart())
-    async def on_start(message: Message) -> None:
+    async def on_start(
+        message: Message,
+        user_request_count: int | None = None,
+    ) -> None:
         payload = (message.text or "").partition(" ")[2].strip()
         if payload.startswith("dl_"):
             key = payload[3:]
@@ -421,15 +446,28 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await deliver_track(message, status, url)
             return
 
+        extra = (
+            f"\n\n📊 Ваших обращений к боту: {user_request_count}"
+            if user_request_count is not None
+            else ""
+        )
         await message.answer(
-            WELCOME_TEXT,
+            WELCOME_TEXT + extra,
             disable_web_page_preview=True,
             reply_markup=start_keyboard(),
         )
 
     @router.message(Command("help"))
-    async def on_help(message: Message) -> None:
-        await message.answer(HELP_TEXT, disable_web_page_preview=True)
+    async def on_help(
+        message: Message,
+        user_request_count: int | None = None,
+    ) -> None:
+        extra = (
+            f"\n\n📊 Ваших обращений к боту: {user_request_count}"
+            if user_request_count is not None
+            else ""
+        )
+        await message.answer(HELP_TEXT + extra, disable_web_page_preview=True)
 
     @router.message(Command("terms"))
     async def on_terms(message: Message) -> None:

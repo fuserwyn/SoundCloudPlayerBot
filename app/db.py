@@ -1,4 +1,4 @@
-"""Store user acceptance of /terms — PostgreSQL (Railway) or SQLite (local)."""
+"""DB: /terms acceptances and per-user request stats — PostgreSQL or SQLite (local)."""
 
 from __future__ import annotations
 
@@ -50,6 +50,17 @@ class AcceptanceStore:
                     )
                     """
                 )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS bot_users (
+                        user_id        BIGINT PRIMARY KEY,
+                        username       TEXT,
+                        first_seen     TIMESTAMPTZ NOT NULL,
+                        last_seen      TIMESTAMPTZ NOT NULL,
+                        request_count  BIGINT NOT NULL
+                    )
+                    """
+                )
             logger.info("Acceptance DB ready (PostgreSQL)")
             return
 
@@ -67,6 +78,18 @@ class AcceptanceStore:
                     username      TEXT,
                     accepted_at   TEXT    NOT NULL,
                     PRIMARY KEY (user_id, terms_version)
+                )
+                """
+            )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bot_users (
+                    user_id        INTEGER NOT NULL,
+                    username       TEXT,
+                    first_seen     TEXT    NOT NULL,
+                    last_seen      TEXT    NOT NULL,
+                    request_count  INTEGER NOT NULL,
+                    PRIMARY KEY (user_id)
                 )
                 """
             )
@@ -143,3 +166,47 @@ class AcceptanceStore:
             accepted_at=accepted_iso,
             terms_version=terms_version,
         )
+
+    async def record_user_request(self, user_id: int, username: str | None) -> int:
+        """Upsert user row and increment request_count. Returns the new count."""
+        if username is not None:
+            u = username.strip()
+            username = u if u else None
+
+        now = datetime.now(timezone.utc)
+        if self._pool is not None:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO bot_users (user_id, username, first_seen, last_seen, request_count)
+                    VALUES ($1, $2, $3, $3, 1)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        username = COALESCE($2, bot_users.username),
+                        last_seen = EXCLUDED.last_seen,
+                        request_count = bot_users.request_count + 1
+                    RETURNING request_count
+                    """,
+                    user_id,
+                    username,
+                    now,
+                )
+                return int(row["request_count"]) if row else 1
+
+        assert self._db_path is not None
+        now_iso = now.isoformat(timespec="seconds")
+        async with aiosqlite.connect(self._db_path) as db:
+            cur = await db.execute(
+                """
+                INSERT INTO bot_users (user_id, username, first_seen, last_seen, request_count)
+                VALUES (?, ?, ?, ?, 1)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    username = COALESCE(excluded.username, username),
+                    last_seen = excluded.last_seen,
+                    request_count = request_count + 1
+                RETURNING request_count
+                """,
+                (user_id, username, now_iso, now_iso),
+            )
+            row = await cur.fetchone()
+            await db.commit()
+            return int(row[0]) if row else 1
