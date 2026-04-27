@@ -356,13 +356,36 @@ body {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
+.tab:hover:not(.tab--active) {
+  color: var(--text);
+  border-color: rgba(128, 128, 128, 0.35);
+  background: var(--bg);
+}
+
+.tab:focus {
+  outline: none;
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .tab--active {
-  background: var(--bg-elev-2);
+  /* var(--bg) + var(--text) оба от темы TG — без «тёмного квадрата» + чёрный текст в light mode. */
+  background: var(--bg);
   color: var(--text);
   border-color: var(--accent);
+}
+
+.tab--active:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .tab-panel--hidden,
@@ -523,26 +546,47 @@ body {
   border-radius: 10px;
 }
 
-.pl-tracks__text {
+.pl-tracks__main {
   flex: 1;
   min-width: 0;
+  text-align: left;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
   font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  cursor: pointer;
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.pl-tracks__play,
+.pl-tracks__main:hover {
+  color: var(--accent);
+}
+
+.pl-tracks__main:focus {
+  outline: none;
+}
+
+.pl-tracks__main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .pl-tracks__del {
   flex-shrink: 0;
   padding: 6px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(232, 93, 93, 0.4);
   background: var(--bg-elev-2);
-  color: var(--text);
+  color: #e85d5d;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-}
-
-.pl-tracks__del {
-  color: #e85d5d;
-  border-color: rgba(232, 93, 93, 0.4);
 }

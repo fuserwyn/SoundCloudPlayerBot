@@ -39,6 +39,45 @@ DEFAULT_LIMIT = 10
 STATIC_FILES = {"index.html", "styles.css", "player.js"}
 
 
+def _normalize_artwork_url(url: str) -> str:
+    u = url.strip()
+    if u.startswith("//"):
+        u = "https:" + u
+    # Telegram WebView (https) иногда грузит http с sndcdn как mixed / блокирует
+    if u.startswith("http://") and "sndcdn.com" in u:
+        u = "https://" + u[7:]
+    return u
+
+
+def _thumbnail_from_entry(e: dict[str, Any]) -> str | None:
+    """Как в app.soundcloud: при extract_flat у yt-dlp часто только thumbnails[]."""
+    thumb: Any = e.get("thumbnail")
+    if isinstance(thumb, str) and thumb.strip():
+        if thumb.strip().startswith("//") or thumb.strip().startswith("http"):
+            return _normalize_artwork_url(thumb)
+    if isinstance(thumb, list) and thumb:
+        for t in reversed(thumb):
+            if isinstance(t, str) and (
+                t.startswith("http") or t.startswith("//")
+            ):
+                return _normalize_artwork_url(t)
+    if not thumb:
+        thumbnails = e.get("thumbnails") or []
+        if isinstance(thumbnails, list) and thumbnails:
+            last = thumbnails[-1]
+            if isinstance(last, dict):
+                u = last.get("url")
+                if isinstance(u, str) and (
+                    u.startswith("http") or u.startswith("//")
+                ):
+                    return _normalize_artwork_url(u)
+            elif isinstance(last, str) and (
+                last.startswith("http") or last.startswith("//")
+            ):
+                return _normalize_artwork_url(last)
+    return None
+
+
 def _search_sync(query: str, limit: int) -> list[dict[str, Any]]:
     opts: dict[str, Any] = {
         "quiet": True,
@@ -65,7 +104,7 @@ def _search_sync(query: str, limit: int) -> list[dict[str, Any]]:
                 ),
                 "url": url,
                 "duration": int(e.get("duration") or 0),
-                "thumbnail": e.get("thumbnail") or None,
+                "thumbnail": _thumbnail_from_entry(e),
             }
         )
     return results

@@ -162,11 +162,6 @@
     refreshPlList();
   }
 
-  function switchToSearchAndPlay(url) {
-    showSearchTab();
-    loadTrack(url);
-  }
-
   function loadTrack(rawUrl) {
     const match = SC_URL_RE.exec((rawUrl || "").trim());
     if (!match) return false;
@@ -397,21 +392,34 @@
       const li = document.createElement("li");
       li.className = "pl-tracks__row";
       const lab = (t.title || "—") + (t.artist ? " — " + t.artist : "");
-      li.innerHTML = `<span class="pl-tracks__text">${escapeHtml(lab)}</span>`;
-      const playB = document.createElement("button");
-      playB.type = "button";
-      playB.className = "pl-tracks__play";
-      playB.textContent = "▶";
-      playB.addEventListener("click", () => switchToSearchAndPlay(t.url));
+
+      const playMain = document.createElement("button");
+      playMain.type = "button";
+      playMain.className = "pl-tracks__main";
+      playMain.setAttribute("aria-label", "Включить: " + lab);
+      playMain.textContent = lab;
+      playMain.addEventListener("click", () => {
+        if (!loadTrack(t.url)) return;
+        requestAnimationFrame(() => {
+          try {
+            playerWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          } catch (e) {
+            /* */
+          }
+        });
+      });
+
       const delB = document.createElement("button");
       delB.type = "button";
       delB.className = "pl-tracks__del";
+      delB.setAttribute("aria-label", "Удалить трек");
       delB.textContent = "✕";
-      delB.addEventListener("click", async () => {
+      delB.addEventListener("click", async (e) => {
+        e.stopPropagation();
         const d = await apiJson("DELETE", `/api/playlists/${id}/tracks/${t.id}`);
         if (d.ok) void openPlDetail(id);
       });
-      li.appendChild(playB);
+      li.appendChild(playMain);
       li.appendChild(delB);
       plTracks.appendChild(li);
     });
