@@ -66,6 +66,8 @@ CALLBACK_PL_VIEW = "pvv:"
 CALLBACK_PL_DEL = "pdl:"
 CALLBACK_PL_RMT = "rmt:"
 CALLBACK_PL_BULK = "pldl:"  # pldl:playlist_id — скачать весь (до лимита)
+CALLBACK_TMA_PLAY = "tply:"  # tply:cache_id — очередь в открытый мини-апп
+CALLBACK_TMA_PL = "wpp:"  # wpp:playlist_id:entry_id
 MAX_BUTTON_TEXT = 60
 PLAYLIST_BUTTON_LABEL = 30
 # За одно нажатие — столько mp3, чтобы не упереться в flood и не зависать часами
@@ -225,26 +227,13 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         return await acceptance_store.get_user_lang(user_id)
 
     def main_reply_markup(lang: str) -> ReplyKeyboardMarkup:
-        # Первая строка — только Web App: в клиентах кнопка с иконкой слева у поля ввода.
-        row_app: list[KeyboardButton] = []
-        if webapp_url:
-            wu = webapp_url.rstrip("/")
-            row_app.append(
-                KeyboardButton(
-                    text=_K_SOUND,
-                    web_app=WebAppInfo(url=f"{wu}/"),
-                )
-            )
-        else:
-            row_app.append(KeyboardButton(text=_K_SOUND))
-        row_main = [
-            KeyboardButton(text=i18n.t(lang, "k_playlists")),
-            KeyboardButton(text=i18n.t(lang, "k_help")),
-        ]
+        # Мини-апп открывается синей кнопкой у поля ввода (MenuButtonWebApp), дубля в клавиатуре нет.
         return ReplyKeyboardMarkup(
             keyboard=[
-                row_app,
-                row_main,
+                [
+                    KeyboardButton(text=i18n.t(lang, "k_playlists")),
+                    KeyboardButton(text=i18n.t(lang, "k_help")),
+                ],
                 [
                     KeyboardButton(text=_TXT_LANG_RU),
                     KeyboardButton(text=_TXT_LANG_EN),
@@ -283,10 +272,12 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
     def make_track_keyboard(track_url: str, lang: str) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
         if webapp_url:
+            tkey = url_cache.put(track_url)
             rows.append(
                 [
-                    _player_button(
-                        webapp_url, track_url, i18n.t(lang, "btn_open_player")
+                    InlineKeyboardButton(
+                        text=i18n.t(lang, "btn_open_player"),
+                        callback_data=f"{CALLBACK_TMA_PLAY}{tkey}",
                     )
                 ]
             )
@@ -339,8 +330,9 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if webapp_url:
             rows.append(
                 [
-                    _player_button(
-                        webapp_url, track_url, i18n.t(lang, "btn_open_player")
+                    InlineKeyboardButton(
+                        text=i18n.t(lang, "btn_open_player"),
+                        callback_data=f"{CALLBACK_TMA_PLAY}{cache_key}",
                     )
                 ]
             )
@@ -559,8 +551,9 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             if webapp_url:
                 pl_lbl = _playlist_track_button_label(e, lang)
                 one.append(
-                    _player_button(
-                        webapp_url, e.track_url, pl_lbl, compact=True
+                    InlineKeyboardButton(
+                        text=pl_lbl,
+                        callback_data=f"{CALLBACK_TMA_PL}{playlist_id}:{e.id}",
                     )
                 )
             else:
@@ -1151,6 +1144,64 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 await cq.message.answer(text, reply_markup=pick_kb)
             except Exception:
                 pass
+
+    @router.callback_query(F.data.startswith(CALLBACK_TMA_PL))
+    async def on_tma_pl_track(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user:
+            await cq.answer()
+            return
+        uid = cq.from_user.id
+        lang = await _lang_of(uid)
+        rest = cq.data[len(CALLBACK_TMA_PL) :]
+        parts = rest.split(":", 1)
+        if len(parts) != 2:
+            await cq.answer(i18n.t(lang, "tma_err"), show_alert=True)
+            return
+        try:
+            pl_id = int(parts[0])
+            entry_id = int(parts[1])
+        except ValueError:
+            await cq.answer(i18n.t(lang, "tma_err"), show_alert=True)
+            return
+        tracks = await acceptance_store.playlist_get_tracks(uid, pl_id)
+        idx = next((i for i, t in enumerate(tracks) if t.id == entry_id), -1)
+        if idx < 0:
+            await cq.answer(i18n.t(lang, "tma_pl_stale"), show_alert=True)
+            return
+        t = tracks[idx]
+        v = await acceptance_store.tma_play_enqueue(
+            uid,
+            t.track_url,
+            playlist_id=pl_id,
+            track_index=idx,
+            thumbnail=t.thumbnail_url,
+        )
+        if v <= 0:
+            await cq.answer(i18n.t(lang, "tma_err"), show_alert=True)
+            return
+        await cq.answer(i18n.t(lang, "tma_queued"))
+
+    @router.callback_query(F.data.startswith(CALLBACK_TMA_PLAY))
+    async def on_tma_url_play(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user:
+            await cq.answer()
+            return
+        uid = cq.from_user.id
+        lang = await _lang_of(uid)
+        key = cq.data[len(CALLBACK_TMA_PLAY) :]
+        url = url_cache.get(key)
+        if not url:
+            await cq.answer(i18n.t(lang, "cq_link_stale"), show_alert=True)
+            return
+        meta = pick_meta.get(key)
+        thumb = meta[2] if meta else None
+        v = await acceptance_store.tma_play_enqueue(
+            uid, url, playlist_id=None, track_index=0, thumbnail=thumb
+        )
+        if v <= 0:
+            await cq.answer(i18n.t(lang, "tma_err"), show_alert=True)
+            return
+        await cq.answer(i18n.t(lang, "tma_queued"))
 
     @router.callback_query(F.data.startswith(CALLBACK_DOWNLOAD_PREFIX))
     async def on_post_pick_download(cq: CallbackQuery) -> None:

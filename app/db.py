@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -23,6 +23,7 @@ def _now_msk() -> datetime:
     return datetime.now(MSK)
 
 # Плейлисты (на пользователя)
+TMA_CMD_MAX_AGE_SEC = 600.0  # иначе не подхватывать «застрявшую» команду при открытии
 MAX_PLAYLISTS = 20
 MAX_PLAYLIST_NAME_LEN = 64
 MAX_TRACKS_IN_PLAYLIST = 150
@@ -40,6 +41,33 @@ def _thumb_in(url: str | None) -> str | None:
     if not s:
         return None
     return s[:2000]
+
+
+def _tma_fresh_by_updated_at(
+    uat: object, use_pg: bool
+) -> bool:
+    if uat is None:
+        return False
+    now = datetime.now(timezone.utc)
+    if use_pg and isinstance(uat, datetime):
+        d = uat
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return (now - d).total_seconds() <= TMA_CMD_MAX_AGE_SEC
+    if not use_pg and isinstance(uat, str) and uat.strip():
+        try:
+            s = uat.replace("Z", "+00:00")
+            d = (
+                datetime.fromisoformat(s)
+                if "T" in s
+                else datetime.fromisoformat(s.replace(" ", "T") + "+00:00")
+            )
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            return (now - d).total_seconds() <= TMA_CMD_MAX_AGE_SEC
+        except Exception:
+            return False
+    return False
 
 
 @dataclass(frozen=True)
@@ -147,6 +175,23 @@ class AcceptanceStore:
                     "ALTER TABLE playlist_tracks "
                     "ADD COLUMN IF NOT EXISTS thumbnail_url TEXT"
                 )
+                await conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tma_play_cmd (
+                        user_id       BIGINT NOT NULL PRIMARY KEY,
+                        version       BIGINT NOT NULL DEFAULT 0,
+                        track_url     TEXT    NOT NULL,
+                        playlist_id   BIGINT,
+                        track_index   INT     NOT NULL DEFAULT 0,
+                        thumbnail_url TEXT,
+                        updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                await conn.execute(
+                    "ALTER TABLE tma_play_cmd ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+                )
             logger.info("Acceptance DB ready (PostgreSQL)")
             return
 
@@ -225,6 +270,26 @@ class AcceptanceStore:
                 await db.execute(
                     "ALTER TABLE playlist_tracks ADD COLUMN thumbnail_url TEXT"
                 )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tma_play_cmd (
+                    user_id        INTEGER NOT NULL PRIMARY KEY,
+                    version        INTEGER NOT NULL DEFAULT 0,
+                    track_url      TEXT    NOT NULL,
+                    playlist_id    INTEGER,
+                    track_index    INTEGER NOT NULL DEFAULT 0,
+                    thumbnail_url  TEXT,
+                    updated_at     TEXT    NOT NULL DEFAULT (datetime('now'))
+                )
+                """
+            )
+            try:
+                await db.execute(
+                    "ALTER TABLE tma_play_cmd ADD COLUMN updated_at "
+                    "TEXT NOT NULL DEFAULT (datetime('now'))"
+                )
+            except Exception:
+                pass
             await db.commit()
         logger.info("Acceptance DB ready (SQLite) at %s", self._db_path)
 
@@ -859,3 +924,155 @@ class AcceptanceStore:
                     )
                 await db.commit()
         return None
+
+    async def tma_play_enqueue(
+        self,
+        user_id: int,
+        track_url: str,
+        *,
+        playlist_id: int | None = None,
+        track_index: int = 0,
+        thumbnail: str | None = None,
+    ) -> int:
+        """Следующий номер версии; мини-апп подхватит при poll, если last < version."""
+        u = (track_url or "").strip()
+        if not u.startswith("http"):
+            return 0
+        t_in = _thumb_in(thumbnail)
+        if self._pool is not None:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO tma_play_cmd (
+                        user_id, version, track_url, playlist_id, track_index,
+                        thumbnail_url
+                    ) VALUES ($1, 1, $2, $3, $4, $5)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        version = tma_play_cmd.version + 1,
+                        track_url = EXCLUDED.track_url,
+                        playlist_id = EXCLUDED.playlist_id,
+                        track_index = EXCLUDED.track_index,
+                        thumbnail_url = EXCLUDED.thumbnail_url,
+                        updated_at = NOW()
+                    RETURNING version
+                    """,
+                    user_id,
+                    u,
+                    playlist_id,
+                    int(track_index),
+                    t_in,
+                )
+                return int(row["version"]) if row else 0
+        assert self._db_path is not None
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute("BEGIN IMMEDIATE")
+            cur = await db.execute(
+                "SELECT version FROM tma_play_cmd WHERE user_id = ?",
+                (user_id,),
+            )
+            r = await cur.fetchone()
+            if r is None:
+                await db.execute(
+                    """
+                    INSERT INTO tma_play_cmd (
+                        user_id, version, track_url, playlist_id, track_index,
+                        thumbnail_url, updated_at
+                    ) VALUES (?, 1, ?, ?, ?, ?, datetime('now'))
+                    """,
+                    (user_id, u, playlist_id, int(track_index), t_in),
+                )
+                new_v = 1
+            else:
+                new_v = int(r[0]) + 1
+                await db.execute(
+                    """
+                    UPDATE tma_play_cmd SET
+                        version = ?,
+                        track_url = ?,
+                        playlist_id = ?,
+                        track_index = ?,
+                        thumbnail_url = ?,
+                        updated_at = datetime('now')
+                    WHERE user_id = ?
+                    """,
+                    (new_v, u, playlist_id, int(track_index), t_in, user_id),
+                )
+            await db.commit()
+            return new_v
+
+    async def tma_play_poll(
+        self, user_id: int, since: int
+    ) -> dict[str, int | str | None]:
+        """
+        since — последняя применённая мини-аппом version.
+        has_update: 1, если v > since (нужно переключить трек).
+        """
+        if self._pool is not None:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT version, track_url, playlist_id, track_index, thumbnail_url,
+                        updated_at
+                    FROM tma_play_cmd
+                    WHERE user_id = $1
+                    """,
+                    user_id,
+                )
+        else:
+            assert self._db_path is not None
+            row = None
+            async with aiosqlite.connect(self._db_path) as db:
+                cur = await db.execute(
+                    """
+                    SELECT version, track_url, playlist_id, track_index, thumbnail_url,
+                        updated_at
+                    FROM tma_play_cmd
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                )
+                r1 = await cur.fetchone()
+                if r1:
+                    row = {
+                        "version": r1[0],
+                        "track_url": r1[1],
+                        "playlist_id": r1[2],
+                        "track_index": r1[3],
+                        "thumbnail_url": r1[4],
+                        "updated_at": r1[5] if len(r1) > 5 else None,
+                    }
+        if row is None:
+            return {
+                "v": 0,
+                "has_update": 0,
+                "track_url": "",
+                "playlist_id": None,
+                "track_index": 0,
+                "thumbnail": None,
+            }
+        uat: object
+        if self._pool is not None:
+            v = int(row["version"])
+            tu = (row["track_url"] or "").strip()
+            plid = row["playlist_id"]
+            tidx = int(row["track_index"] or 0)
+            th = row["thumbnail_url"]
+            uat = row["updated_at"]
+        else:
+            v = int(row["version"])
+            tu = (row["track_url"] or "").strip()
+            plid = row["playlist_id"]
+            tidx = int(row["track_index"] or 0)
+            th = row["thumbnail_url"]
+            uat = row.get("updated_at")  # type: ignore[union-attr]
+        upd = 1 if v > int(since) else 0
+        if upd and not _tma_fresh_by_updated_at(uat, use_pg=self._pool is not None):
+            upd = 0
+        return {
+            "v": v,
+            "has_update": upd,
+            "track_url": tu,
+            "playlist_id": int(plid) if plid is not None else None,
+            "track_index": tidx,
+            "thumbnail": _thumb_out(th) if th else None,
+        }

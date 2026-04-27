@@ -347,6 +347,33 @@ async def handle_health(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
+async def handle_tma_poll(request: web.Request) -> web.Response:
+    uid = _require_telegram_user(request)
+    try:
+        since = int((request.query.get("since") or "0").strip())
+    except ValueError:
+        since = 0
+    store: AcceptanceStore = request.app["store"]
+    d = await store.tma_play_poll(uid, since)
+    return web.json_response(
+        {
+            "v": d["v"],
+            "has_update": d["has_update"],
+            "play": (
+                {
+                    "url": d["track_url"],
+                    "playlist_id": d["playlist_id"],
+                    "track_index": d["track_index"],
+                    "thumbnail": d["thumbnail"],
+                }
+                if d["has_update"]
+                else None
+            ),
+        },
+        dumps=lambda o: json.dumps(o, ensure_ascii=False),
+    )
+
+
 async def handle_locale(request: web.Request) -> web.Response:
     """Строки UI мини-аппа на языке пользователя из той же БД, что и бот."""
     init = _get_init_data(request)
@@ -430,6 +457,7 @@ def build_app() -> web.Application:
     app.on_cleanup.append(on_cleanup)
     app.router.add_get("/", handle_root)
     app.router.add_get("/healthz", handle_health)
+    app.router.add_get("/api/tma/poll", handle_tma_poll)
     app.router.add_get("/api/locale", handle_locale)
     app.router.add_get("/api/search", handle_search)
     app.router.add_get("/api/playlists/track_status", handle_playlist_track_status)

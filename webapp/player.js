@@ -618,6 +618,9 @@
 
   let plCache = null;
   let plListRefreshGen = 0;
+  let tmaVersion = 0;
+  let tmaPollId = null;
+  let tmaRemoteStarted = false;
 
   async function fetchPlSummaries() {
     if (!getInitData()) return [];
@@ -1161,6 +1164,75 @@
     else window.close();
   });
 
+  async function tmaApplyPlay(play) {
+    if (!play || !play.url) return;
+    const plId = play.playlist_id;
+    const idx0 = play.track_index != null ? +play.track_index : 0;
+    const th = play.thumbnail || null;
+    if (plId != null && plId !== "") {
+      const r = await apiGet("/api/playlists/" + plId);
+      if (r.ok) {
+        const data = await r.json();
+        const tr = data.tracks || [];
+        const urls = tr.map((t) => t.url);
+        if (!urls.length) {
+          loadTrack(play.url, {
+            thumbnail: th || undefined,
+            compact: startCompact
+          });
+          showPlayerView();
+          return;
+        }
+        const idx = Math.min(Math.max(0, idx0), urls.length - 1);
+        const trow = tr[idx];
+        const thumb = th || (trow && trow.thumbnail) || undefined;
+        showPlTab();
+        loadTrack(urls[idx], {
+          playlist: { plId: +plId, urls, index: idx },
+          thumbnail: thumb,
+          compact: startCompact
+        });
+        showPlayerView();
+        void openPlDetail(+plId);
+        return;
+      }
+    }
+    loadTrack(play.url, { thumbnail: th || undefined, compact: startCompact });
+    showPlayerView();
+  }
+
+  async function tmaPollOnce() {
+    if (!getInitData()) return;
+    try {
+      const r = await fetch(
+        "/api/tma/poll?since=" + encodeURIComponent(String(tmaVersion)),
+        { headers: apiHeaders() }
+      );
+      if (!r.ok) return;
+      const d = await r.json();
+      const v = parseInt(d.v, 10) || 0;
+      if (d.has_update && d.play) {
+        tmaVersion = v;
+        await tmaApplyPlay(d.play);
+      } else {
+        tmaVersion = v;
+      }
+    } catch (e) {
+      /* */
+    }
+  }
+
+  function startTmaRemotePoll() {
+    if (tmaPollId != null) return;
+    tmaPollId = setInterval(() => void tmaPollOnce(), 1500);
+  }
+
+  function ensureTmaRemote() {
+    if (tmaRemoteStarted || !getInitData() || !tg) return;
+    tmaRemoteStarted = true;
+    startTmaRemotePoll();
+  }
+
   function startInitDataRecovery() {
     if (getInitData() || !tg) return;
     const t0 = Date.now();
@@ -1172,6 +1244,7 @@
           await refreshPlList();
           void syncPlayerPlaylistRow();
         })();
+        ensureTmaRemote();
         return;
       }
       if (Date.now() - t0 > 12000) clearInterval(id);
@@ -1198,6 +1271,7 @@
   async function init() {
     await loadLocale();
     await boot();
+    ensureTmaRemote();
     startInitDataRecovery();
   }
   void init();
