@@ -1,9 +1,83 @@
 (() => {
   const tg = window.Telegram && window.Telegram.WebApp;
+
+  function applyTelegramTheme() {
+    if (!tg || !tg.themeParams) return;
+    const t = tg.themeParams;
+    const r = document.documentElement;
+    if (t.bg_color) {
+      r.style.setProperty("--tg-theme-bg-color", t.bg_color);
+      r.style.setProperty("--bg", t.bg_color);
+    }
+    if (t.text_color) {
+      r.style.setProperty("--tg-theme-text-color", t.text_color);
+      r.style.setProperty("--text", t.text_color);
+    }
+    if (t.hint_color) {
+      r.style.setProperty("--tg-theme-hint-color", t.hint_color);
+      r.style.setProperty("--text-dim", t.hint_color);
+    }
+    if (t.button_color) {
+      r.style.setProperty("--tg-theme-button-color", t.button_color);
+      r.style.setProperty("--accent", t.button_color);
+    }
+    if (t.button_text_color) {
+      r.style.setProperty("--tg-theme-button-text-color", t.button_text_color);
+      r.style.setProperty("--accent-text", t.button_text_color);
+    }
+    if (t.secondary_bg_color) {
+      r.style.setProperty("--tg-theme-secondary-bg-color", t.secondary_bg_color);
+      r.style.setProperty("--bg-elev", t.secondary_bg_color);
+    }
+    if (t.link_color) {
+      r.style.setProperty("--tg-theme-link-color", t.link_color);
+    }
+    r.classList.add("tg-integrated");
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta && t.bg_color) {
+      themeMeta.setAttribute("content", t.bg_color);
+    }
+    if (tg.setBackgroundColor && t.bg_color) {
+      try {
+        tg.setBackgroundColor(t.bg_color);
+      } catch (e) {
+        /* */
+      }
+    }
+  }
+
   if (tg) {
     tg.ready();
     tg.expand();
-    tg.setHeaderColor && tg.setHeaderColor("secondary_bg_color");
+    applyTelegramTheme();
+    try {
+      if (typeof tg.onEvent === "function") {
+        tg.onEvent("themeChanged", applyTelegramTheme);
+      }
+    } catch (e) {
+      /* */
+    }
+    try {
+      if (tg.setHeaderColor) {
+        tg.setHeaderColor("bg_color");
+      }
+    } catch (e) {
+      /* */
+    }
+    try {
+      if (tg.disableVerticalSwipes) {
+        tg.disableVerticalSwipes();
+      }
+    } catch (e) {
+      /* */
+    }
+    try {
+      if (tg.MainButton && typeof tg.MainButton.hide === "function") {
+        tg.MainButton.hide();
+      }
+    } catch (e) {
+      /* */
+    }
   }
 
   /** initData в части клиентов появляется не в первый кадр — читать при каждом запросе. */
@@ -72,19 +146,49 @@
     });
   }
 
+  function readInitialPlId() {
+    const params = new URLSearchParams(location.search);
+    const q = params.get("pl");
+    if (q && /^\d+$/.test(q)) {
+      return parseInt(q, 10);
+    }
+    const sp = tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
+    if (sp) {
+      const m = /^pl_(\d+)$/.exec(sp);
+      if (m) {
+        return parseInt(m[1], 10);
+      }
+    }
+    return null;
+  }
+
   function readInitialTrack() {
     const params = new URLSearchParams(location.search);
     const fromQuery = params.get("track");
-    if (fromQuery) return decodeURIComponent(fromQuery);
+    if (fromQuery) {
+      return decodeURIComponent(fromQuery);
+    }
 
     const startParam =
       tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param;
-    if (startParam) {
-      try {
-        return atob(startParam.replace(/-/g, "+").replace(/_/g, "/"));
-      } catch (e) {
-        return startParam;
+    if (!startParam) {
+      return null;
+    }
+    if (/^pl_\d+$/.test(startParam)) {
+      return null;
+    }
+    try {
+      const dec = atob(
+        startParam.replace(/-/g, "+").replace(/_/g, "/")
+      );
+      if (dec && /^https?:\/\//i.test(dec)) {
+        return dec;
       }
+    } catch (e) {
+      /* not base64 */
+    }
+    if (/^https?:\/\//i.test(startParam)) {
+      return startParam;
     }
     return null;
   }
@@ -184,6 +288,7 @@
       artist: p.artist != null ? p.artist : nowPlaying.artist,
       thumbnail: p.thumbnail !== undefined ? p.thumbnail : nowPlaying.thumbnail,
     };
+    updatePlayerArtwork(nowPlaying.thumbnail);
   }
 
   function updateMeta(sound) {
@@ -278,7 +383,6 @@
     tabPlBtn.classList.add("tab--active");
     tabSearchBtn.classList.remove("tab--active");
     void refreshPlList();
-    setTimeout(() => void refreshPlList(), 80);
   }
 
   /**
@@ -295,7 +399,8 @@
       url: trackUrl,
       title: "Загружаю…",
       artist: "",
-      thumbnail: null,
+      thumbnail:
+        opts && opts.thumbnail !== undefined ? opts.thumbnail : null,
     });
     void syncPlayerPlaylistRow();
 
@@ -372,12 +477,30 @@
     return s;
   }
 
+  function updatePlayerArtwork(url) {
+    const img = document.getElementById("playerArt");
+    const ph = document.getElementById("playerArtPh");
+    if (!img || !ph) return;
+    const u = thumbStyleUrl(url);
+    if (u) {
+      img.src = u;
+      img.alt = "";
+      img.classList.remove("player__art--hidden");
+      ph.classList.add("player__art--hidden");
+    } else {
+      img.removeAttribute("src");
+      img.classList.add("player__art--hidden");
+      ph.classList.remove("player__art--hidden");
+    }
+  }
+
   function renderResultsStatus(text) {
     resultsBox.innerHTML = `<div class="results__status">${escapeHtml(text)}</div>`;
     showResultsView();
   }
 
   let plCache = null;
+  let plListRefreshGen = 0;
 
   async function fetchPlSummaries() {
     if (!getInitData()) return [];
@@ -422,7 +545,7 @@
       btn.appendChild(cover);
       btn.appendChild(body);
       btn.appendChild(dur);
-      btn.addEventListener("click", () => loadTrack(it.url));
+      btn.addEventListener("click", () => loadTrack(it.url, { thumbnail: it.thumbnail }));
       wrap.appendChild(btn);
 
       if (getInitData()) {
@@ -527,6 +650,7 @@
     "тогда плейлисты будут привязаны к твоему аккаунту.";
 
   async function refreshPlList() {
+    const gen = ++plListRefreshGen;
     if (!getInitData()) {
       plNoAuth.textContent = plNoAuthDefaultText;
       plNoAuth.hidden = false;
@@ -538,6 +662,7 @@
     plBox.hidden = false;
     plList.innerHTML = "";
     const res = await apiGet("/api/playlists");
+    if (gen !== plListRefreshGen) return;
     if (res.status === 401) {
       plNoAuth.textContent =
         "Сервер не подтвердил сессию Telegram. В деплое мини-аппа " +
@@ -552,7 +677,9 @@
       plEmpty.hidden = true;
       return;
     }
+    if (gen !== plListRefreshGen) return;
     plCache = await res.json();
+    if (gen !== plListRefreshGen) return;
     if (!plCache.length) {
       plEmpty.hidden = false;
       return;
@@ -571,7 +698,7 @@
     });
   }
 
-  async function openPlDetail(id) {
+  async function openPlDetail(id, options) {
     if (playlistQueue && playlistQueue.plId !== id) {
       playlistQueue = null;
       updatePlaylistNavLabels();
@@ -608,6 +735,7 @@
       const playFromRow = () => {
         const ok = loadTrack(t.url, {
           playlist: { plId: id, urls, index: idx },
+          thumbnail: t.thumbnail || undefined,
         });
         if (!ok) return;
         highlightPlRow(idx);
@@ -708,6 +836,33 @@
 
     plListView.hidden = true;
     plDetail.hidden = false;
+
+    if (
+      options &&
+      typeof options.autoPlayIndex === "number" &&
+      tracks.length
+    ) {
+      const idx = Math.min(
+        Math.max(0, options.autoPlayIndex),
+        tracks.length - 1
+      );
+      const t0 = tracks[idx];
+      const ok = loadTrack(t0.url, {
+        playlist: { plId: id, urls, index: idx },
+        thumbnail: t0.thumbnail || undefined,
+      });
+      if (ok) {
+        highlightPlRow(idx);
+        showPlayerView();
+        requestAnimationFrame(() => {
+          try {
+            playerWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          } catch (e) {
+            /* */
+          }
+        });
+      }
+    }
   }
 
   plBack.addEventListener("click", () => {
@@ -882,10 +1037,20 @@
     else window.close();
   });
 
-  const initialTrack = readInitialTrack();
-  if (initialTrack) {
-    loadTrack(initialTrack);
-  } else {
-    showEmptyView();
+  async function boot() {
+    const plId = readInitialPlId();
+    if (plId) {
+      showPlTab();
+      await refreshPlList();
+      await openPlDetail(plId, { autoPlayIndex: 0 });
+      return;
+    }
+    const initialTrack = readInitialTrack();
+    if (initialTrack) {
+      loadTrack(initialTrack);
+    } else {
+      showEmptyView();
+    }
   }
+  void boot();
 })();

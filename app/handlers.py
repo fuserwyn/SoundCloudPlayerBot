@@ -522,6 +522,16 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         playlist_id: int, entries, lang: str
     ) -> InlineKeyboardMarkup:
         rrows: list[list[InlineKeyboardButton]] = []
+        if webapp_url:
+            wu = webapp_url.rstrip("/")
+            rrows.append(
+                [
+                    InlineKeyboardButton(
+                        text=i18n.t(lang, "btn_pl_in_player"),
+                        web_app=WebAppInfo(url=f"{wu}/?pl={playlist_id}"),
+                    )
+                ]
+            )
         for i, e in enumerate(entries, start=1):
             one: list[InlineKeyboardButton] = []
             if webapp_url:
