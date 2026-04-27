@@ -1,6 +1,7 @@
 FROM python:3.12-slim
 
-# Аналог webapp/Dockerfile: docker build -f Dockerfile.webapp .
+# См. webapp/Dockerfile — тот же образ. Сборка: docker build -f Dockerfile.webapp .
+# Railway: Root Directory = корень репо (не webapp). См. комментарий в webapp/Dockerfile.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
