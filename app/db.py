@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+# Все отметки времени в БД — с часовым поясом Москвы (отображение в SQLite как +03:00).
+MSK = ZoneInfo("Europe/Moscow")
+
+
+def _now_msk() -> datetime:
+    return datetime.now(MSK)
 
 # Плейлисты (на пользователя)
 MAX_PLAYLISTS = 20
@@ -22,7 +30,7 @@ MAX_TRACKS_IN_PLAYLIST = 150
 class Acceptance:
     user_id: int
     username: str | None
-    accepted_at: str  # ISO-8601 UTC
+    accepted_at: str  # ISO-8601, Europe/Moscow
     terms_version: str
 
 
@@ -208,7 +216,7 @@ class AcceptanceStore:
     async def record(
         self, user_id: int, username: str | None, terms_version: str
     ) -> Acceptance:
-        accepted_at = datetime.now(timezone.utc)
+        accepted_at = _now_msk()
         accepted_iso = accepted_at.isoformat(timespec="seconds")
 
         if self._pool is not None:
@@ -258,7 +266,7 @@ class AcceptanceStore:
             u = username.strip()
             username = u if u else None
 
-        now = datetime.now(timezone.utc)
+        now = _now_msk()
         if self._pool is not None:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
@@ -355,7 +363,7 @@ class AcceptanceStore:
         n = self._normalize_playlist_name(name)
         if not n:
             return None, "Укажи непустое название."
-        now = datetime.now(timezone.utc)
+        now = _now_msk()
         if self._pool is not None:
             async with self._pool.acquire() as conn:
                 cnt = await conn.fetchval(
@@ -522,7 +530,7 @@ class AcceptanceStore:
         url = track_url.strip()
         if not url:
             return "Пустая ссылка."
-        now = datetime.now(timezone.utc)
+        now = _now_msk()
         if self._pool is not None:
             import asyncpg
 
