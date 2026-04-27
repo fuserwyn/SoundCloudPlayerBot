@@ -341,18 +341,19 @@ body {
 .tabs {
   display: flex;
   gap: 8px;
-  padding: 4px 2px 0;
+  padding: 4px 2px 8px;
+  flex-shrink: 0;
 }
 
 .tab {
   flex: 1;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-elev);
   color: var(--text-dim);
   font: inherit;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;

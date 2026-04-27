@@ -247,15 +247,23 @@ async def handle_health(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
+def _static_file_response(path: Path) -> web.FileResponse:
+    """Mini App сильно кэширует статику в WebView — без no-store часто виден старый UI."""
+    r = web.FileResponse(path)
+    r.headers["Cache-Control"] = "no-store, max-age=0, must-revalidate"
+    r.headers["Pragma"] = "no-cache"
+    return r
+
+
 async def handle_root(_: web.Request) -> web.FileResponse:
-    return web.FileResponse(BASE_DIR / "index.html")
+    return _static_file_response(BASE_DIR / "index.html")
 
 
 async def handle_static(request: web.Request) -> web.StreamResponse:
     name = request.match_info.get("name", "")
     if name not in STATIC_FILES:
         raise web.HTTPNotFound()
-    return web.FileResponse(BASE_DIR / name)
+    return _static_file_response(BASE_DIR / name)
 
 
 async def on_startup(app: web.Application) -> None:
