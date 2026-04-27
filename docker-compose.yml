@@ -21,6 +21,24 @@ services:
       timeout: 10s
       retries: 3
 
+  # Отдельный образ/процесс от корневого Dockerfile — один CMD не может запустить и бота, и webapp.
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    image: soundcloud-player-webapp:latest
+    container_name: soundcloud-player-webapp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /data/db/scbot.db
+      TZ: Europe/Moscow
+    ports:
+      - "8080:8080"
+    volumes:
+      - scbot_db:/data/db
+
 volumes:
   downloads:
   scbot_db:
