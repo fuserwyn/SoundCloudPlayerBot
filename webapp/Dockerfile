@@ -8,10 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY webapp/requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY index.html styles.css player.js server.py ./
+COPY app ./app
+COPY webapp/index.html webapp/styles.css webapp/player.js webapp/server.py webapp/tg_webapp_auth.py ./
 
 EXPOSE 8080
 
