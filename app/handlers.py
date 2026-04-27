@@ -369,7 +369,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         target: Message,
         url: str,
     ) -> str | None:
-        """Скачать трек и отправить mp3. None = ОК, иначе короткое сообщение об ошибке."""
+        """Скачать один трек и отправить одним сообщением с mp3.
+
+        Плейлист: вызывается по разу на трек — отдельное скачивание и отдельная
+        отправка, лимит Telegram 50 МБ на каждый файл, не на весь плейлист сразу.
+        """
         try:
             track: Track = await download_track(
                 url=url,
@@ -658,8 +662,9 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 await asyncio.sleep(BULK_MP3_DELAY_SEC)
         final = (
             f"🎧 «{html.escape(name)}»\n"
-            f"Готово: {ok} файлов, с ошибками/пропусков: {err} (лимит 50 МБ, "
-            f"SoundCloud, сеть)."
+            f"Готово: {ok} файлов, сбой/пропуск: {err}. "
+            f"Каждый трек — отдельное сообщение; лимит 50 МБ на один файл "
+            f"(не на весь плейлист). Дальше — SoundCloud / сеть."
         )
         try:
             await st.edit_text(final, parse_mode=ParseMode.HTML)
