@@ -32,6 +32,7 @@ for p in (ROOT_DIR, ROOT_DIR.parent):
 else:
     raise RuntimeError("Cannot find app/db.py (run from project root with app package).")
 
+from app import i18n  # noqa: E402
 from app.db import AcceptanceStore  # noqa: E402
 
 MAX_LIMIT = 20
@@ -346,6 +347,25 @@ async def handle_health(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
+async def handle_locale(request: web.Request) -> web.Response:
+    """Строки UI мини-аппа на языке пользователя из той же БД, что и бот."""
+    init = _get_init_data(request)
+    token = (request.app.get("bot_token") or "").strip()
+    lang = "ru"
+    if init and token:
+        uid = parse_user_id_from_init_data(init, token)
+        if uid is not None:
+            store: AcceptanceStore = request.app["store"]
+            lang = await store.get_user_lang(uid)
+    lang = i18n.normalize_lang(lang)
+    keys = i18n.webapp_ui_keys()
+    ui = {k: i18n.t(lang, k) for k in keys}
+    return web.json_response(
+        {"lang": lang, "ui": ui},
+        dumps=lambda o: json.dumps(o, ensure_ascii=False),
+    )
+
+
 def _static_file_response(path: Path) -> web.FileResponse:
     """Mini App сильно кэширует статику в WebView — без no-store часто виден старый UI."""
     r = web.FileResponse(path)
@@ -410,6 +430,7 @@ def build_app() -> web.Application:
     app.on_cleanup.append(on_cleanup)
     app.router.add_get("/", handle_root)
     app.router.add_get("/healthz", handle_health)
+    app.router.add_get("/api/locale", handle_locale)
     app.router.add_get("/api/search", handle_search)
     app.router.add_get("/api/playlists/track_status", handle_playlist_track_status)
     app.router.add_get("/api/playlists", handle_playlists_list)

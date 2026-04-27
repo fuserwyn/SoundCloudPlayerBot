@@ -1,7 +1,7 @@
 (() => {
   const tg = window.Telegram && window.Telegram.WebApp;
 
-  /** Открытие из кнопки «▶ трек» в чате: не expand(), компактный виджет, UI свёрнут. */
+  /** Кнопка трека в плейлисте: ?compact=1 — без вкладок/поиска, виджет компактный; expand() всё равно вызываем. */
   const startParamsEarly = new URLSearchParams(window.location.search);
   const startCompact = startParamsEarly.get("compact") === "1";
   if (startCompact) {
@@ -55,8 +55,13 @@
 
   if (tg) {
     tg.ready();
-    if (!startCompact) {
-      tg.expand();
+    /* expand() всегда: иначе мини-апп остаётся «листом» снизу, сверху пустота. */
+    if (typeof tg.expand === "function") {
+      try {
+        tg.expand();
+      } catch (e) {
+        /* */
+      }
     }
     applyTelegramTheme();
     try {
@@ -153,6 +158,72 @@
       headers: apiHeaders(!!body),
       body: body ? JSON.stringify(body) : undefined,
     });
+  }
+
+  let I18N = null;
+
+  function t(key) {
+    return (I18N && I18N[key]) || key;
+  }
+
+  async function loadLocale() {
+    try {
+      const r = await fetch("/api/locale", { headers: apiHeaders() });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.ui) {
+        I18N = d.ui;
+        document.documentElement.setAttribute(
+          "lang",
+          d.lang === "en" ? "en" : "ru"
+        );
+        applyLocale();
+      }
+    } catch (e) {
+      /* offline or old server */
+    }
+  }
+
+  function applyLocale() {
+    if (!I18N) return;
+    const setText = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = t(key);
+    };
+    const setPh = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) el.placeholder = t(key);
+    };
+    const setAria = (id, key) => {
+      const el = document.getElementById(id);
+      if (el) el.setAttribute("aria-label", t(key));
+    };
+    setText("brandTagline", "webapp_brand_subtitle");
+    setAria("closeBtn", "webapp_close");
+    setText("tabSearchBtn", "webapp_tab_search");
+    setText("tabPlBtn", "webapp_tab_playlists");
+    setAria("mainNav", "webapp_nav_sections");
+    setPh("searchInput", "webapp_search_placeholder");
+    setAria("searchBtn", "webapp_search_btn");
+    const sh = document.getElementById("searchHint");
+    if (sh) sh.textContent = t("webapp_search_hint");
+    setText("emptyTitle", "webapp_empty_title");
+    setText("emptySub", "webapp_empty_sub");
+    setPh("plNewName", "webapp_pl_name_placeholder");
+    setText("plNewBtn", "webapp_pl_create");
+    setAria("plList", "webapp_pl_list_a11y");
+    setText("plEmpty", "webapp_pl_empty");
+    setAria("plBack", "webapp_pl_back");
+    setAria("plDeleteList", "webapp_pl_delete_aria");
+    const pld = document.getElementById("plDeleteList");
+    if (pld) pld.setAttribute("title", t("webapp_pl_delete_title"));
+    setAria("playerWrap", "webapp_player_a11y");
+    setText("metaTitle", "webapp_loading");
+    setText("hintFooter", "webapp_footer");
+    if (playBtn) setAria("playBtn", "webapp_aria_play_pause");
+    const ifr = document.getElementById("scPlayer");
+    if (ifr) ifr.setAttribute("title", "SoundCloud");
+    updatePlaylistNavLabels();
   }
 
   function readInitialPlId() {
@@ -270,15 +341,15 @@
     const pl = playlistQueue;
     const multi = pl && pl.urls.length > 1;
     if (multi) {
-      prevBtn.textContent = "‹ трек";
-      nextBtn.textContent = "трек ›";
-      prevBtn.title = "Предыдущий трек в плейлисте (на первом — −15 с)";
-      nextBtn.title = "Следующий трек в плейлисте (на последнем — +15 с)";
+      prevBtn.textContent = t("webapp_nav_prev_pl");
+      nextBtn.textContent = t("webapp_nav_next_pl");
+      prevBtn.title = t("webapp_tip_prev_pl");
+      nextBtn.title = t("webapp_tip_next_pl");
     } else {
-      prevBtn.textContent = "«15";
-      nextBtn.textContent = "15»";
-      prevBtn.title = "−15 секунд";
-      nextBtn.title = "+15 секунд";
+      prevBtn.textContent = t("webapp_btn_prev");
+      nextBtn.textContent = t("webapp_btn_next");
+      prevBtn.title = t("webapp_tip_seek_m15");
+      nextBtn.title = t("webapp_tip_seek_p15");
     }
   }
 
@@ -305,14 +376,15 @@
 
   function updateMeta(sound) {
     if (!sound) return;
-    metaTitle.textContent = sound.title || "Без названия";
+    const title = sound.title || t("no_title");
+    metaTitle.textContent = title;
     metaArtist.textContent = (sound.user && sound.user.username) || "";
     const u = sound.permalink_url || lastLoadedTrackUrl;
     const art =
       sound.artwork_url || (sound.user && sound.user.avatar_url) || null;
     setNowPlaying({
       url: u,
-      title: sound.title || "Без названия",
+      title,
       artist: (sound.user && sound.user.username) || "",
       thumbnail: art,
     });
@@ -342,8 +414,7 @@
       if (playerPlAdd) playerPlAdd.classList.add("hidden");
       if (playerPlHintNo) {
         playerPlHintNo.classList.remove("hidden");
-        playerPlHintNo.textContent =
-          "Создай плейлист во вкладке «Плейлисты».";
+        playerPlHintNo.textContent = t("webapp_pl_pick_first");
       }
       return;
     }
@@ -351,12 +422,12 @@
       if (playerPlAdd) playerPlAdd.classList.add("hidden");
       if (playerPlHint) {
         playerPlHint.classList.remove("hidden");
-        playerPlHint.textContent = "Трек уже во всех плейлистах";
+        playerPlHint.textContent = t("webapp_in_all_pl");
       }
       return;
     }
     if (playerPlAdd) {
-      playerPlAdd.textContent = "В плейлист…";
+      playerPlAdd.textContent = t("webapp_add_pl");
     }
   }
 
@@ -417,7 +488,7 @@
     lastLoadedTrackUrl = trackUrl;
     setNowPlaying({
       url: trackUrl,
-      title: "Загружаю…",
+      title: t("webapp_loading"),
       artist: "",
       thumbnail:
         opts && opts.thumbnail !== undefined ? opts.thumbnail : null,
@@ -435,7 +506,7 @@
     }
     updatePlaylistNavLabels();
 
-    metaTitle.textContent = "Загружаю…";
+    metaTitle.textContent = t("webapp_loading");
     metaArtist.textContent = "";
 
     if (widget) {
@@ -536,12 +607,12 @@
 
   function renderResults(items) {
     if (!items || !items.length) {
-      renderResultsStatus("Ничего не нашёл. Попробуй переформулировать запрос.");
+      renderResultsStatus(t("webapp_no_results"));
       return;
     }
     const head = document.createElement("h2");
     head.className = "results__head";
-    head.textContent = "Результаты";
+    head.textContent = t("webapp_results");
 
     const scroll = document.createElement("div");
     scroll.className = "results__scroll";
@@ -569,7 +640,7 @@
         : 0;
       const durStr = formatDuration(sec);
       body.innerHTML = `
-        <div class="result__title">${escapeHtml(it.title || "Без названия")}</div>
+        <div class="result__title">${escapeHtml(it.title || t("no_title"))}</div>
         <div class="result__artist">${escapeHtml(it.artist || "")}</div>
         ${durStr ? `<div class="result__duration">${escapeHtml(durStr)}</div>` : ""}
       `;
@@ -584,7 +655,7 @@
         const addBtn = document.createElement("button");
         addBtn.type = "button";
         addBtn.className = "result__pladd";
-        addBtn.textContent = "В плейлист…";
+        addBtn.textContent = t("webapp_add_pl");
         addBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           void openPlPickerForItem(it, plRow, addBtn);
@@ -615,7 +686,7 @@
       tip.className = "pl-pick pl-hint";
       tip.style.margin = "0";
       tip.style.fontSize = "12px";
-      tip.textContent = "Сначала создай плейлист во вкладке «Плейлисты».";
+      tip.textContent = t("webapp_pl_pick_first");
       pickParent.appendChild(tip);
       addBtn.disabled = false;
       return;
@@ -644,11 +715,11 @@
           }
         } else {
           const data = await res.json().catch(() => ({}));
-          addBtn.textContent = (data && data.error) || "Ошибка";
+          addBtn.textContent = (data && data.error) || t("webapp_err_short");
         }
         addBtn.disabled = false;
         setTimeout(() => {
-          addBtn.textContent = "В плейлист…";
+          addBtn.textContent = t("webapp_add_pl");
         }, 2000);
       });
       pickParent.appendChild(b);
@@ -673,39 +744,34 @@
       void openPlDetail(plId);
     } else {
       const d = await res.json().catch(() => ({}));
-      window.alert((d && d.error) || "Не удалось изменить порядок");
+      window.alert((d && d.error) || t("webapp_reorder_fail"));
     }
   }
-
-  const plNoAuthDefaultText =
-    "Открой мини-апп из Telegram (кнопка «SoundCloud» в боте) — " +
-    "тогда плейлисты будут привязаны к твоему аккаунту.";
 
   async function refreshPlList() {
     const gen = ++plListRefreshGen;
     if (!getInitData()) {
-      plNoAuth.textContent = plNoAuthDefaultText;
+      plNoAuth.textContent = t("webapp_pl_open_tg");
       plNoAuth.hidden = false;
       plBox.hidden = true;
       return;
     }
-    plNoAuth.textContent = plNoAuthDefaultText;
+    plNoAuth.textContent = t("webapp_pl_open_tg");
     plNoAuth.hidden = true;
     plBox.hidden = false;
     plList.innerHTML = "";
     const res = await apiGet("/api/playlists");
     if (gen !== plListRefreshGen) return;
     if (res.status === 401) {
-      plNoAuth.textContent =
-        "Сервер не подтвердил сессию Telegram. В деплое мини-аппа " +
-        "нужен тот же бот-токен, что у бота (TELEGRAM_API_KEY / BOT_TOKEN), " +
-        "и общая с ботом база (DATABASE_URL).";
+      plNoAuth.textContent = t("webapp_pl_auth_err");
       plNoAuth.hidden = false;
       plBox.hidden = true;
       return;
     }
     if (!res.ok) {
-      plList.innerHTML = `<li class="pl-hint">Не удалось загрузить</li>`;
+      plList.innerHTML = `<li class="pl-hint">${escapeHtml(
+        t("webapp_pl_load_list_fail")
+      )}</li>`;
       plEmpty.hidden = true;
       return;
     }
@@ -723,7 +789,9 @@
       b.type = "button";
       b.className = "pl-list__item";
       b.innerHTML = `<span class="pl-list__name">${escapeHtml(p.name)}</span>
-        <span class="pl-list__meta">${p.track_count} тр.</span>`;
+        <span class="pl-list__meta">${escapeHtml(
+          String(p.track_count)
+        )} ${escapeHtml(t("webapp_pl_n_tr"))}</span>`;
       b.addEventListener("click", () => void openPlDetail(p.id));
       li.appendChild(b);
       plList.appendChild(li);
@@ -783,7 +851,7 @@
       const thumb = document.createElement("button");
       thumb.type = "button";
       thumb.className = "pl-tracks__thumb";
-      thumb.setAttribute("aria-label", "Обложка, включить: " + lab);
+      thumb.setAttribute("aria-label", t("webapp_aria_play_cover") + lab);
       const tu = thumbStyleUrl(t.thumbnail);
       if (tu) {
         thumb.style.backgroundImage = `url("${tu.replace(/"/g, '\\"')}")`;
@@ -796,7 +864,7 @@
       const playIco = document.createElement("button");
       playIco.type = "button";
       playIco.className = "pl-tracks__playico";
-      playIco.setAttribute("aria-label", "Включить");
+      playIco.setAttribute("aria-label", t("webapp_aria_enable_short"));
       playIco.textContent = "▶";
       playIco.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -806,7 +874,7 @@
       const textBtn = document.createElement("button");
       textBtn.type = "button";
       textBtn.className = "pl-tracks__main";
-      textBtn.setAttribute("aria-label", "Включить: " + lab);
+      textBtn.setAttribute("aria-label", t("webapp_aria_row_play") + lab);
       const tTitle = document.createElement("div");
       tTitle.className = "pl-tracks__title";
       tTitle.textContent = t.title || "—";
@@ -822,13 +890,13 @@
       const up = document.createElement("button");
       up.type = "button";
       up.className = "pl-tracks__move";
-      up.setAttribute("aria-label", "Выше");
+      up.setAttribute("aria-label", t("webapp_aria_up"));
       up.textContent = "↑";
       up.disabled = idx === 0;
       const down = document.createElement("button");
       down.type = "button";
       down.className = "pl-tracks__move";
-      down.setAttribute("aria-label", "Ниже");
+      down.setAttribute("aria-label", t("webapp_aria_down"));
       down.textContent = "↓";
       down.disabled = idx === tracks.length - 1;
       up.addEventListener("click", (e) => {
@@ -845,7 +913,7 @@
       const delB = document.createElement("button");
       delB.type = "button";
       delB.className = "pl-tracks__del";
-      delB.setAttribute("aria-label", "Удалить трек");
+      delB.setAttribute("aria-label", t("webapp_aria_delete_track"));
       delB.textContent = "✕";
       delB.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -906,7 +974,7 @@
 
   plDeleteList.addEventListener("click", async () => {
     if (currentPlId == null) return;
-    if (!window.confirm("Удалить плейлист целиком?")) return;
+    if (!window.confirm(t("webapp_pl_del_confirm"))) return;
     const r = await apiJson("DELETE", `/api/playlists/${currentPlId}`);
     if (r.ok) {
       plBack.click();
@@ -925,7 +993,7 @@
       void refreshPlList();
     } else {
       const d = await r.json().catch(() => ({}));
-      window.alert((d && d.error) || "Не удалось создать");
+      window.alert((d && d.error) || t("webapp_pl_create_fail"));
     }
   });
 
@@ -969,7 +1037,7 @@
     searchAbortController = new AbortController();
     const seq = ++searchSeq;
 
-    renderResultsStatus("Ищу…");
+    renderResultsStatus(t("webapp_searching"));
     searchBtn.disabled = true;
 
     try {
@@ -980,7 +1048,9 @@
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         if (seq === searchSeq) {
-          renderResultsStatus(data.error || `Поиск упал (${res.status})`);
+          renderResultsStatus(
+            data.error || `${t("webapp_search_err")} (${res.status})`
+          );
         }
         return;
       }
@@ -988,7 +1058,7 @@
       if (seq === searchSeq) renderResults(data.results || []);
     } catch (e) {
       if (e.name === "AbortError") return;
-      if (seq === searchSeq) renderResultsStatus("Сеть недоступна. Попробуй ещё раз.");
+      if (seq === searchSeq) renderResultsStatus(t("webapp_network_fail"));
     } finally {
       if (seq === searchSeq) searchBtn.disabled = false;
     }
@@ -1084,5 +1154,10 @@
       showEmptyView();
     }
   }
-  void boot();
+
+  async function init() {
+    await loadLocale();
+    await boot();
+  }
+  void init();
 })();

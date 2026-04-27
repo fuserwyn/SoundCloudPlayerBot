@@ -163,6 +163,72 @@ _STR: dict[str, dict[str, str]] = {
         part_n="Часть {i} из {n}.",
         pl_bulk_status="🎧 «{name}»\n⏳ 0/{n}…",
         bad_callback="Ошибка",
+        webapp_brand_subtitle="в Telegram",
+        webapp_close="Закрыть",
+        webapp_tab_search="Поиск",
+        webapp_tab_playlists="Плейлисты",
+        webapp_nav_sections="Разделы",
+        webapp_search_placeholder="Найти трек или вставить ссылку…",
+        webapp_search_hint=(
+            "Название, ссылка soundcloud.com. Плейлисты — соседняя вкладка. "
+            "Mp3 в личке с ботом."
+        ),
+        webapp_empty_title="Что послушаем?",
+        webapp_empty_sub=(
+            "Введи запрос или ссылку — подберу треки. Плейлисты — соседняя вкладка."
+        ),
+        webapp_pl_name_placeholder="Название плейлиста",
+        webapp_pl_create="Создать",
+        webapp_pl_list_a11y="Список плейлистов",
+        webapp_pl_empty="Нет плейлистов — создай по полю выше.",
+        webapp_pl_back="Назад",
+        webapp_pl_delete_aria="Удалить плейлист",
+        webapp_pl_delete_title="Удалить",
+        webapp_player_a11y="Плеер",
+        webapp_loading="Загружаю…",
+        webapp_footer=(
+            "Widget SoundCloud. Звук, пока открыт мини-апп. "
+            "MP3 — в чате с ботом."
+        ),
+        webapp_search_btn="Искать",
+        webapp_results="Результаты",
+        webapp_no_results="Ничего не нашёл. Попробуй переформулировать запрос.",
+        webapp_search_err="Ошибка поиска",
+        webapp_err_short="Ошибка",
+        webapp_add_pl="В плейлист…",
+        webapp_searching="Ищу…",
+        webapp_pl_pick_first="Сначала создай плейлист во вкладке «Плейлисты».",
+        webapp_pl_open_tg=(
+            "Открой мини-апп из Telegram (кнопка «SoundCloud» в боте) — "
+            "тогда плейлисты будут привязаны к твоему аккаунту."
+        ),
+        webapp_pl_auth_err=(
+            "Сервер не подтвердил сессию Telegram. В деплое мини-аппа "
+            "нужен тот же бот-токен, что у бота (TELEGRAM_API_KEY / BOT_TOKEN), "
+            "и общая с ботом база (DATABASE_URL)."
+        ),
+        webapp_pl_load_list_fail="Не удалось загрузить",
+        webapp_pl_n_tr="тр.",
+        webapp_in_all_pl="Трек уже во всех плейлистах",
+        webapp_reorder_fail="Не удалось изменить порядок",
+        webapp_pl_del_confirm="Удалить плейлист целиком?",
+        webapp_pl_create_fail="Не удалось создать",
+        webapp_network_fail="Сеть недоступна. Попробуй ещё раз.",
+        webapp_btn_prev="«15",
+        webapp_btn_next="15»",
+        webapp_nav_prev_pl="‹ трек",
+        webapp_nav_next_pl="трек ›",
+        webapp_tip_prev_pl="Предыдущий трек в плейлисте (на первом — −15 с)",
+        webapp_tip_next_pl="Следующий трек в плейлисте (на последнем — +15 с)",
+        webapp_tip_seek_m15="−15 секунд",
+        webapp_tip_seek_p15="+15 секунд",
+        webapp_aria_play_cover="Обложка, включить: ",
+        webapp_aria_row_play="Включить: ",
+        webapp_aria_enable_short="Включить",
+        webapp_aria_up="Выше",
+        webapp_aria_down="Ниже",
+        webapp_aria_delete_track="Удалить трек",
+        webapp_aria_play_pause="Воспроизведение / пауза",
     ),
     "en": _M(
         welcome=(
@@ -303,8 +369,80 @@ _STR: dict[str, dict[str, str]] = {
         part_n="Part {i} of {n}.",
         pl_bulk_status="🎧 «{name}»\n⏳ 0/{n}…",
         bad_callback="Error",
+        webapp_brand_subtitle="in Telegram",
+        webapp_close="Close",
+        webapp_tab_search="Search",
+        webapp_tab_playlists="Playlists",
+        webapp_nav_sections="Sections",
+        webapp_search_placeholder="Find a track or paste a link…",
+        webapp_search_hint=(
+            "Name or soundcloud.com link. Playlists — next tab. "
+            "MP3 in a private chat with the bot."
+        ),
+        webapp_empty_title="What should we play?",
+        webapp_empty_sub=(
+            "Enter a search or a link — I’ll pick tracks. Playlists are on the other tab."
+        ),
+        webapp_pl_name_placeholder="Playlist name",
+        webapp_pl_create="Create",
+        webapp_pl_list_a11y="Playlist list",
+        webapp_pl_empty="No playlists — create one above.",
+        webapp_pl_back="Back",
+        webapp_pl_delete_aria="Delete playlist",
+        webapp_pl_delete_title="Delete",
+        webapp_player_a11y="Player",
+        webapp_loading="Loading…",
+        webapp_footer=(
+            "SoundCloud widget. Audio while the mini app is open. "
+            "MP3 in the bot chat."
+        ),
+        webapp_search_btn="Search",
+        webapp_results="Results",
+        webapp_no_results="Nothing found. Try a different search.",
+        webapp_search_err="Search error",
+        webapp_err_short="Error",
+        webapp_add_pl="Add to playlist…",
+        webapp_searching="Searching…",
+        webapp_pl_pick_first="Create a playlist in the «Playlists» tab first.",
+        webapp_pl_open_tg=(
+            "Open the mini app from Telegram (the SoundCloud button in the bot) — "
+            "so playlists are linked to your account."
+        ),
+        webapp_pl_auth_err=(
+            "Could not verify the Telegram session. The mini app needs the same "
+            "bot token (TELEGRAM_API_KEY / BOT_TOKEN) and the same database (DATABASE_URL) as the bot."
+        ),
+        webapp_pl_load_list_fail="Failed to load",
+        webapp_pl_n_tr="tr",
+        webapp_in_all_pl="Track is already in every playlist",
+        webapp_reorder_fail="Could not change order",
+        webapp_pl_del_confirm="Delete the entire playlist?",
+        webapp_pl_create_fail="Could not create",
+        webapp_network_fail="Network error. Please try again.",
+        webapp_btn_prev="«15",
+        webapp_btn_next="15»",
+        webapp_nav_prev_pl="‹ tr",
+        webapp_nav_next_pl="tr ›",
+        webapp_tip_prev_pl="Previous playlist track (on first: −15 s)",
+        webapp_tip_next_pl="Next playlist track (on last: +15 s)",
+        webapp_tip_seek_m15="−15 seconds",
+        webapp_tip_seek_p15="+15 seconds",
+        webapp_aria_play_cover="Cover, play: ",
+        webapp_aria_row_play="Play: ",
+        webapp_aria_enable_short="Play",
+        webapp_aria_up="Up",
+        webapp_aria_down="Down",
+        webapp_aria_delete_track="Remove track",
+        webapp_aria_play_pause="Play / Pause",
     ),
 }
+
+
+def webapp_ui_keys() -> tuple[str, ...]:
+    """Ключи строк для мини-аппа (GET /api/locale)."""
+    return tuple(
+        sorted(k for k in _STR["ru"] if k.startswith("webapp_")) + ["no_title"]
+    )
 
 
 # Условия (HTML) — отдельно, подставляем TERMS_VERSION в handlers при необходимости

@@ -1169,7 +1169,7 @@ html.tg-integrated body::before {
   border-color: rgba(239, 91, 91, 0.6);
 }
 
-/* Режим «в фоне» (кнопка трека в чате + ?compact=1): без expand, мини-плеер */
+/* Режим с кнопки плейлиста (?compact=1): без вкладок, компактный виджет, контент сверху */
 html.app--compact .tabs,
 html.app--compact #panelSearch,
 html.app--compact #panelPl,
@@ -1178,9 +1178,10 @@ html.app--compact .hint {
 }
 
 html.app--compact .app {
-  justify-content: flex-end;
-  gap: 0;
-  padding-top: 8px;
+  /* flex-end тянул весь плеер вниз с огромной пустотой сверху — смысл compact в скрытии вкладок, не в «подвал». */
+  justify-content: flex-start;
+  gap: 10px;
+  padding-top: max(8px, env(safe-area-inset-top, 0px));
   padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
 }
 
@@ -1228,8 +1229,9 @@ html.app--compact .player__now .meta__artist {
 }
 
 html.app--compact .player__frame iframe {
-  height: 100px !important;
-  min-height: 100px;
+  height: min(220px, 38vh) !important;
+  min-height: 120px;
+  max-height: 280px;
 }
 
 html.app--compact .controls,
