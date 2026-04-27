@@ -6,7 +6,11 @@
     tg.setHeaderColor && tg.setHeaderColor("secondary_bg_color");
   }
 
-  const initData = (tg && tg.initData) || "";
+  /** initData в части клиентов появляется не в первый кадр — читать при каждом запросе. */
+  function getInitData() {
+    const w = window.Telegram && window.Telegram.WebApp;
+    return (w && w.initData) || "";
+  }
 
   const iframe = document.getElementById("scPlayer");
   const empty = document.getElementById("empty");
@@ -50,7 +54,8 @@
 
   function apiHeaders(json) {
     const h = {};
-    if (initData) h["X-Telegram-Init-Data"] = initData;
+    const d = getInitData();
+    if (d) h["X-Telegram-Init-Data"] = d;
     if (json) h["Content-Type"] = "application/json";
     return h;
   }
@@ -199,7 +204,7 @@
 
   async function syncPlayerPlaylistRow() {
     if (!playerPlRow) return;
-    if (!initData || !nowPlaying.url || !nowPlaying.url.startsWith("http")) {
+    if (!getInitData() || !nowPlaying.url || !nowPlaying.url.startsWith("http")) {
       playerPlRow.classList.add("hidden");
       return;
     }
@@ -272,7 +277,8 @@
     panelPl.removeAttribute("hidden");
     tabPlBtn.classList.add("tab--active");
     tabSearchBtn.classList.remove("tab--active");
-    refreshPlList();
+    void refreshPlList();
+    setTimeout(() => void refreshPlList(), 80);
   }
 
   /**
@@ -374,7 +380,7 @@
   let plCache = null;
 
   async function fetchPlSummaries() {
-    if (!initData) return [];
+    if (!getInitData()) return [];
     const res = await apiGet("/api/playlists");
     if (res.status === 401) return [];
     if (!res.ok) return [];
@@ -419,7 +425,7 @@
       btn.addEventListener("click", () => loadTrack(it.url));
       wrap.appendChild(btn);
 
-      if (initData) {
+      if (getInitData()) {
         const plRow = document.createElement("div");
         plRow.className = "result__plrow";
         const addBtn = document.createElement("button");
@@ -442,7 +448,7 @@
   }
 
   async function openPlPickerForItem(item, rowEl, addBtn) {
-    if (!initData) return;
+    if (!getInitData()) return;
     const pickParent = rowEl.querySelector(".player__plpick") || rowEl;
     addBtn.disabled = true;
     pickParent.querySelectorAll(".pl-pick").forEach((n) => n.remove());
@@ -516,17 +522,27 @@
     }
   }
 
+  const plNoAuthDefaultText =
+    "Открой мини-апп из Telegram (кнопка «SoundCloud» в боте) — " +
+    "тогда плейлисты будут привязаны к твоему аккаунту.";
+
   async function refreshPlList() {
-    if (!initData) {
+    if (!getInitData()) {
+      plNoAuth.textContent = plNoAuthDefaultText;
       plNoAuth.hidden = false;
       plBox.hidden = true;
       return;
     }
+    plNoAuth.textContent = plNoAuthDefaultText;
     plNoAuth.hidden = true;
     plBox.hidden = false;
     plList.innerHTML = "";
     const res = await apiGet("/api/playlists");
     if (res.status === 401) {
+      plNoAuth.textContent =
+        "Сервер не подтвердил сессию Telegram. В деплое мини-аппа " +
+        "нужен тот же бот-токен, что у бота (TELEGRAM_API_KEY / BOT_TOKEN), " +
+        "и общая с ботом база (DATABASE_URL).";
       plNoAuth.hidden = false;
       plBox.hidden = true;
       return;

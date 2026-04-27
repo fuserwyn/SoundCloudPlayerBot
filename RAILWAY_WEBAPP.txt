@@ -1,0 +1,5 @@
+Railway: сервис мини-апп (webapp) — в UI нельзя задать «контекст Docker» через railway.json, только:
+  Settings → Source → Root Directory  =  ПУСТО  (корень репо SoundCloudPlayerBot).
+Если там указать «webapp», сборка падает: нет путей webapp/... и папки app/ в контексте.
+Build: Dockerfile = Dockerfile.webapp  (в корне репо) или config webapp/railway.json.
+Бот (отдельный сервис): Dockerfile без префикса = образ из ./Dockerfile в корне.

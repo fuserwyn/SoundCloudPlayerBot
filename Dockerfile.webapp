@@ -1,7 +1,11 @@
 FROM python:3.12-slim
 
-# См. webapp/Dockerfile — тот же образ. Сборка: docker build -f Dockerfile.webapp .
-# Railway: Root Directory = корень репо (не webapp). См. комментарий в webapp/Dockerfile.
+# == Railway: в настройках СЕРВИСА «webapp» обязательно: ==
+#   Source / Root Directory = ПУСТО (корень репозитория, где рядом app/ и webapp/).
+#   НЕ указывайте "webapp" — иначе COPY webapp/... и COPY app/ не существуют в контексте.
+#   Build: Dockerfile path = Dockerfile.webapp (этот файл в корне) ИЛИ webapp/Dockerfile.
+# Локально:  docker build -f Dockerfile.webapp -t sc-webapp .
+# Алиас:     docker build -f webapp/Dockerfile -t sc-webapp .   (тот же рецепт)
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

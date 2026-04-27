@@ -366,9 +366,17 @@ async def handle_static(request: web.Request) -> web.StreamResponse:
 
 
 async def on_startup(app: web.Application) -> None:
-    token = (os.getenv("TELEGRAM_API_KEY") or "").strip()
+    token = (
+        os.getenv("TELEGRAM_API_KEY")
+        or os.getenv("BOT_TOKEN")
+        or os.getenv("TELEGRAM_BOT_TOKEN")
+        or ""
+    ).strip()
     if not token:
-        logger.warning("TELEGRAM_API_KEY is empty — /api/playlists* will reject initData.")
+        logger.warning(
+            "Bot token is empty (set TELEGRAM_API_KEY or BOT_TOKEN) — "
+            "/api/playlists* will reject initData."
+        )
     du, dpath = _load_db_settings()
     if not du:
         p = dpath
