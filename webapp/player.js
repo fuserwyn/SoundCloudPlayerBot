@@ -247,7 +247,8 @@
     setText("plNewBtn", "webapp_pl_create");
     setAria("plList", "webapp_pl_list_a11y");
     setText("plEmpty", "webapp_pl_empty");
-    setAria("plBack", "webapp_pl_back");
+    setText("plBackText", "webapp_pl_back_to_list");
+    setAria("plBack", "webapp_pl_back_to_list");
     setAria("plDeleteList", "webapp_pl_delete_aria");
     const pld = document.getElementById("plDeleteList");
     if (pld) pld.setAttribute("title", t("webapp_pl_delete_title"));

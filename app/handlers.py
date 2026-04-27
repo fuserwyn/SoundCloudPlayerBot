@@ -547,7 +547,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 ]
             )
         for e in entries:
-            # «✕» слева — в клиентах обычно узкая колонка; длинный текст справа шире.
+            # Слева название (широкая кнопка), справа ✕ — узкая колонка.
             del_btn = InlineKeyboardButton(
                 text="✕",
                 callback_data=f"{CALLBACK_PL_RMT}{playlist_id}:{e.id}",
@@ -556,11 +556,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 pl_lbl = _playlist_track_button_label(e, lang)
                 rrows.append(
                     [
-                        del_btn,
                         InlineKeyboardButton(
                             text=pl_lbl,
                             callback_data=f"{CALLBACK_TMA_PL}{playlist_id}:{e.id}",
                         ),
+                        del_btn,
                     ]
                 )
             else:
@@ -569,11 +569,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 ext = f"{title} — {ar}" if ar else title
                 rrows.append(
                     [
-                        del_btn,
                         InlineKeyboardButton(
                             text=_truncate(f"🌐 {ext}", MAX_BUTTON_TEXT),
                             url=e.track_url,
                         ),
+                        del_btn,
                     ]
                 )
         rrows.append(

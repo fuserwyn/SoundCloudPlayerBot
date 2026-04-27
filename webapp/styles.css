@@ -153,6 +153,38 @@ html.tg-integrated body::before {
   height: 40px;
 }
 
+/* «Назад к списку плейлистов» — .ghost-btn задаёт font-size:0, иначе стрелка визуально пропадала. */
+#plBack.pl-detail__back.ghost-btn {
+  width: auto;
+  min-width: 40px;
+  max-width: min(50%, 200px);
+  height: 40px;
+  padding: 0 10px 0 8px;
+  gap: 4px;
+  font-size: 0;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+.pl-detail__back-ico {
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pl-detail__back-text {
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+  text-align: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Кнопка «удалить плейлист» в шапке: компактная, не ряд с «Назад». */
 #plDeleteList.ghost-btn--sm {
   width: 32px;

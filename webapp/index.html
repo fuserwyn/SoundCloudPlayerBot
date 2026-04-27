@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=18" />
+    <link rel="stylesheet" href="styles.css?v=19" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://w.soundcloud.com/player/api.js"></script>
   </head>
@@ -112,7 +112,10 @@
           </div>
           <div id="plDetail" class="pl-detail" hidden>
             <div class="pl-detail__head">
-              <button type="button" id="plBack" class="ghost-btn" aria-label="Назад">‹</button>
+              <button type="button" id="plBack" class="ghost-btn pl-detail__back" aria-label="Назад">
+                <span class="pl-detail__back-ico" aria-hidden="true">←</span>
+                <span id="plBackText" class="pl-detail__back-text">К плейлистам</span>
+              </button>
               <h2 id="plDetailTitle" class="pl-detail__title">—</h2>
               <button type="button" id="plDeleteList" class="ghost-btn ghost-btn--sm" aria-label="Удалить плейлист" title="Удалить">✕</button>
             </div>
@@ -178,6 +181,6 @@
       </footer>
     </main>
 
-    <script src="player.js?v=20"></script>
+    <script src="player.js?v=21"></script>
   </body>
 </html>
