@@ -680,3 +680,113 @@ class AcceptanceStore:
             )
             await db.commit()
             return bool(cur.rowcount and cur.rowcount > 0)
+
+    async def playlist_track_coverage(
+        self, user_id: int, track_url: str
+    ) -> tuple[int, int] | None:
+        """(всего плейлистов, в скольких есть track_url). None если пустой url."""
+        url = (track_url or "").strip()
+        if not url:
+            return None
+        if self._pool is not None:
+            async with self._pool.acquire() as conn:
+                total = await conn.fetchval(
+                    "SELECT COUNT(*)::bigint FROM playlists WHERE user_id = $1", user_id
+                )
+                with_t = await conn.fetchval(
+                    """
+                    SELECT COUNT(DISTINCT pt.playlist_id)::bigint
+                    FROM playlist_tracks pt
+                    INNER JOIN playlists p ON p.id = pt.playlist_id
+                    WHERE p.user_id = $1 AND pt.track_url = $2
+                    """,
+                    user_id,
+                    url,
+                )
+                return (int(total or 0), int(with_t or 0))
+
+        assert self._db_path is not None
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
+            cur = await db.execute(
+                "SELECT COUNT(*) FROM playlists WHERE user_id = ?",
+                (user_id,),
+            )
+            r0 = await cur.fetchone()
+            total = int(r0[0] if r0 else 0)
+            cur = await db.execute(
+                """
+                SELECT COUNT(DISTINCT pt.playlist_id) FROM playlist_tracks pt
+                INNER JOIN playlists p ON p.id = pt.playlist_id
+                WHERE p.user_id = ? AND pt.track_url = ?
+                """,
+                (user_id, url),
+            )
+            r1 = await cur.fetchone()
+            with_t = int(r1[0] if r1 else 0)
+        return (total, with_t)
+
+    async def playlist_reorder_tracks(
+        self, user_id: int, playlist_id: int, track_ids: list[int]
+    ) -> str | None:
+        """None если ok. track_ids — полный желаемый порядок id."""
+        if not track_ids:
+            return "Пустой список."
+        if len(track_ids) != len(set(track_ids)):
+            return "Повтор id трека."
+        if self._pool is not None:
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT 1 FROM playlists WHERE id = $1 AND user_id = $2",
+                        playlist_id,
+                        user_id,
+                    )
+                    if row is None:
+                        return "Плейлист не найден."
+                    rows = await conn.fetch(
+                        "SELECT id FROM playlist_tracks WHERE playlist_id = $1",
+                        playlist_id,
+                    )
+                    existing = {int(r["id"]) for r in rows}
+                    if set(track_ids) != existing:
+                        return "Список треков не совпадает с плейлистом."
+                    for new_o, tid in enumerate(track_ids, start=1):
+                        await conn.execute(
+                            """
+                            UPDATE playlist_tracks SET sort_order = $1
+                            WHERE id = $2 AND playlist_id = $3
+                            """,
+                            new_o,
+                            tid,
+                            playlist_id,
+                        )
+        else:
+            assert self._db_path is not None
+
+            async with aiosqlite.connect(self._db_path) as db:
+                await db.execute("PRAGMA foreign_keys = ON")
+                cur = await db.execute(
+                    "SELECT 1 FROM playlists WHERE id = ? AND user_id = ?",
+                    (playlist_id, user_id),
+                )
+                if not await cur.fetchone():
+                    return "Плейлист не найден."
+                cur = await db.execute(
+                    "SELECT id FROM playlist_tracks WHERE playlist_id = ?",
+                    (playlist_id,),
+                )
+                rows = await cur.fetchall()
+                existing = {int(r[0]) for r in rows}
+                if set(track_ids) != existing:
+                    return "Список треков не совпадает с плейлистом."
+                for new_o, tid in enumerate(track_ids, start=1):
+                    await db.execute(
+                        """
+                        UPDATE playlist_tracks SET sort_order = ?
+                        WHERE id = ? AND playlist_id = ?
+                        """,
+                        (new_o, tid, playlist_id),
+                    )
+                await db.commit()
+        return None

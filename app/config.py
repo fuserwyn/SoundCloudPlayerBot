@@ -97,6 +97,12 @@ def load_settings() -> Settings:
             )
             db_path = fallback
         logger.info("Using SQLite for acceptances at %s", db_path)
+        logger.warning(
+            "SQLite: при деплое нового контейнера файл БД обычно пустой — плейлисты "
+            "и /terms сбрасываются. В проде задай ОДИН AND тот же DATABASE_URL "
+            "(Postgres) сервисам «бот» и «webapp» в Railway, либо повесь volume на "
+            "каталог с .db (DB_PATH)."
+        )
     else:
         logger.info("Using PostgreSQL for acceptances (DATABASE_URL is set).")
 

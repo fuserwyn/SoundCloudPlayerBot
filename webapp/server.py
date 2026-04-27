@@ -327,6 +327,15 @@ async def on_startup(app: web.Application) -> None:
     await store.init()
     app["store"] = store
     app["bot_token"] = token
+    if du:
+        logger.info("Webapp DB: PostgreSQL — плейлисты в Mini App как у бота при одном сервере БД.")
+    else:
+        logger.warning(
+            "Webapp DB: SQLite (%s). Новый деплой = чаще всего пустая БД; "
+            "плейлисты «исчезают», если webapp и бот не смотрят в один PostgreSQL. "
+            "Скопируй DATABASE_URL из плагина Postgres в оба сервиса.",
+            dpath,
+        )
     logger.info("DB ready for webapp; playlists API enabled.")
 
 
