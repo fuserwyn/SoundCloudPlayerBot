@@ -7,6 +7,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import ErrorEvent
 
 from app.config import load_settings
 from app.db import AcceptanceStore
@@ -38,6 +39,16 @@ async def run() -> None:
     dp = Dispatcher()
     dp.include_router(build_router(settings, acceptance_store))
 
+    @dp.errors()
+    async def on_handler_error(event: ErrorEvent) -> bool:
+        log.error(
+            "Handler error (update_id=%s): %s",
+            event.update.update_id,
+            event.exception,
+            exc_info=event.exception,
+        )
+        return True
+
     me = await bot.get_me()
     log.info("Bot @%s (id=%s) started. Polling for updates…", me.username, me.id)
 
@@ -45,6 +56,13 @@ async def run() -> None:
     log.info("Subscribed update types: %s", allowed)
 
     try:
+        wh = await bot.get_webhook_info()
+        log.info(
+            "Telegram webhook before delete: url=%r pending=%s last_error=%r",
+            wh.url,
+            wh.pending_update_count,
+            (wh.last_error_message or "")[:200] or None,
+        )
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, allowed_updates=allowed)
     finally:

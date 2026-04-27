@@ -214,7 +214,13 @@ class UserActivityMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user = getattr(event, "from_user", None)
         if user is not None and not user.is_bot:
-            await self._store.record_user_request(user.id, user.username)
+            try:
+                await self._store.record_user_request(user.id, user.username)
+            except Exception:
+                logger.exception(
+                    "record_user_request failed (user_id=%s); handler still runs",
+                    user.id,
+                )
         return await handler(event, data)
 
 
