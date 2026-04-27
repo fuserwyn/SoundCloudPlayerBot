@@ -7,7 +7,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import ErrorEvent
+from aiogram.types import ErrorEvent, MenuButtonWebApp, WebAppInfo
 
 from app.config import load_settings
 from app.db import AcceptanceStore
@@ -51,6 +51,19 @@ async def run() -> None:
 
     me = await bot.get_me()
     log.info("Bot @%s (id=%s) started. Polling for updates…", me.username, me.id)
+
+    if settings.webapp_url:
+        wu = settings.webapp_url.rstrip("/") + "/"
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="SoundCloud",
+                    web_app=WebAppInfo(url=wu),
+                )
+            )
+            log.info("Default private-chat menu: WebApp (SoundCloud) → %s", wu)
+        except Exception as exc:
+            log.warning("set_chat_menu_button failed: %s", exc)
 
     allowed = dp.resolve_used_update_types()
     log.info("Subscribed update types: %s", allowed)

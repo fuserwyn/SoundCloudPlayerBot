@@ -100,6 +100,28 @@
     return (w && w.initData) || "";
   }
 
+  /** С кнопки меню / при первом кадре initData иногда пустой — ждём, иначе плейлисты 401. */
+  function waitForInitData(maxMs) {
+    return new Promise((resolve) => {
+      if (getInitData()) {
+        resolve(true);
+        return;
+      }
+      const t0 = Date.now();
+      const id = setInterval(() => {
+        if (getInitData()) {
+          clearInterval(id);
+          resolve(true);
+          return;
+        }
+        if (Date.now() - t0 >= maxMs) {
+          clearInterval(id);
+          resolve(false);
+        }
+      }, 100);
+    });
+  }
+
   const iframe = document.getElementById("scPlayer");
   const empty = document.getElementById("empty");
   const playerWrap = document.getElementById("playerWrap");
@@ -1139,10 +1161,28 @@
     else window.close();
   });
 
+  function startInitDataRecovery() {
+    if (getInitData() || !tg) return;
+    const t0 = Date.now();
+    const id = setInterval(() => {
+      if (getInitData()) {
+        clearInterval(id);
+        void (async () => {
+          await loadLocale();
+          await refreshPlList();
+          void syncPlayerPlaylistRow();
+        })();
+        return;
+      }
+      if (Date.now() - t0 > 12000) clearInterval(id);
+    }, 120);
+  }
+
   async function boot() {
     const plId = readInitialPlId();
     if (plId) {
       showPlTab();
+      await waitForInitData(10000);
       await refreshPlList();
       await openPlDetail(plId, { autoPlayIndex: 0 });
       return;
@@ -1158,6 +1198,7 @@
   async function init() {
     await loadLocale();
     await boot();
+    startInitDataRecovery();
   }
   void init();
 })();

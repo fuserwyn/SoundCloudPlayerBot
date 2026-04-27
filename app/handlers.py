@@ -225,22 +225,26 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         return await acceptance_store.get_user_lang(user_id)
 
     def main_reply_markup(lang: str) -> ReplyKeyboardMarkup:
-        row1: list[KeyboardButton] = []
+        # Первая строка — только Web App: в клиентах кнопка с иконкой слева у поля ввода.
+        row_app: list[KeyboardButton] = []
         if webapp_url:
             wu = webapp_url.rstrip("/")
-            row1.append(
+            row_app.append(
                 KeyboardButton(
                     text=_K_SOUND,
                     web_app=WebAppInfo(url=f"{wu}/"),
                 )
             )
         else:
-            row1.append(KeyboardButton(text=_K_SOUND))
-        row1.append(KeyboardButton(text=i18n.t(lang, "k_playlists")))
-        row1.append(KeyboardButton(text=i18n.t(lang, "k_help")))
+            row_app.append(KeyboardButton(text=_K_SOUND))
+        row_main = [
+            KeyboardButton(text=i18n.t(lang, "k_playlists")),
+            KeyboardButton(text=i18n.t(lang, "k_help")),
+        ]
         return ReplyKeyboardMarkup(
             keyboard=[
-                row1,
+                row_app,
+                row_main,
                 [
                     KeyboardButton(text=_TXT_LANG_RU),
                     KeyboardButton(text=_TXT_LANG_EN),
