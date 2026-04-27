@@ -100,6 +100,10 @@
   let widget = null;
   let isPlaying = false;
 
+  /** Очередь при воспроизведении из плейлиста: листать треки кнопками вместо ±15 с. */
+  let playlistQueue = null;
+  let lastTrackLoadAt = 0;
+
   function setPlayBtn(playing) {
     isPlaying = playing;
     playBtn.textContent = playing ? "❚❚" : "▶";
@@ -113,10 +117,51 @@
       });
       widget.bind(SC.Widget.Events.PLAY, () => setPlayBtn(true));
       widget.bind(SC.Widget.Events.PAUSE, () => setPlayBtn(false));
-      widget.bind(SC.Widget.Events.FINISH, () => setPlayBtn(false));
+      widget.bind(SC.Widget.Events.FINISH, () => {
+        setPlayBtn(false);
+        if (Date.now() - lastTrackLoadAt < 500) return;
+        const pl = playlistQueue;
+        if (!pl || pl.urls.length < 2 || pl.index >= pl.urls.length - 1) {
+          return;
+        }
+        const j = pl.index + 1;
+        loadTrack(pl.urls[j], {
+          playlist: { plId: pl.plId, urls: pl.urls, index: j },
+        });
+        if (currentPlId === pl.plId && !plDetail.hidden) {
+          highlightPlRow(j);
+        }
+      });
       widget.bind(SC.Widget.Events.PLAY_PROGRESS, () => {
         if (!isPlaying) setPlayBtn(true);
       });
+    });
+  }
+
+  function updatePlaylistNavLabels() {
+    const pl = playlistQueue;
+    const multi = pl && pl.urls.length > 1;
+    if (multi) {
+      prevBtn.textContent = "‹ трек";
+      nextBtn.textContent = "трек ›";
+      prevBtn.title = "Предыдущий трек в плейлисте (на первом — −15 с)";
+      nextBtn.title = "Следующий трек в плейлисте (на последнем — +15 с)";
+    } else {
+      prevBtn.textContent = "«15";
+      nextBtn.textContent = "15»";
+      prevBtn.title = "−15 секунд";
+      nextBtn.title = "+15 секунд";
+    }
+  }
+
+  function highlightPlRow(index) {
+    const rows = plTracks.querySelectorAll(".pl-tracks__row");
+    if (index < 0) {
+      rows.forEach((row) => row.classList.remove("pl-tracks__row--current"));
+      return;
+    }
+    rows.forEach((row, i) => {
+      row.classList.toggle("pl-tracks__row--current", i === index);
     });
   }
 
@@ -162,10 +207,27 @@
     refreshPlList();
   }
 
-  function loadTrack(rawUrl) {
+  /**
+   * @param {string} rawUrl
+   * @param {{ playlist: { plId: number, urls: string[], index: number } }} [opts] — соседние кнопки = треки плейлиста
+   */
+  function loadTrack(rawUrl, opts) {
     const match = SC_URL_RE.exec((rawUrl || "").trim());
     if (!match) return false;
     const trackUrl = match[0];
+    lastTrackLoadAt = Date.now();
+
+    if (opts && opts.playlist) {
+      playlistQueue = {
+        plId: opts.playlist.plId,
+        urls: opts.playlist.urls,
+        index: opts.playlist.index
+      };
+    } else {
+      playlistQueue = null;
+    }
+    updatePlaylistNavLabels();
+
     metaTitle.textContent = "Загружаю…";
     metaArtist.textContent = "";
 
@@ -382,13 +444,34 @@
   }
 
   async function openPlDetail(id) {
+    if (playlistQueue && playlistQueue.plId !== id) {
+      playlistQueue = null;
+      updatePlaylistNavLabels();
+    }
+
     const res = await apiGet(`/api/playlists/${id}`);
     if (!res.ok) return;
     const data = await res.json();
     currentPlId = data.id;
     plDetailTitle.textContent = data.name;
+    const tracks = data.tracks || [];
+    const urls = tracks.map((t) => t.url);
+
+    if (playlistQueue && playlistQueue.plId === id) {
+      const cur = playlistQueue.urls[playlistQueue.index];
+      const ni = cur != null ? urls.indexOf(cur) : -1;
+      if (ni >= 0) {
+        playlistQueue = { plId: id, urls, index: ni };
+      } else if (urls.length) {
+        playlistQueue = { plId: id, urls, index: 0 };
+      } else {
+        playlistQueue = null;
+        updatePlaylistNavLabels();
+      }
+    }
+
     plTracks.innerHTML = "";
-    (data.tracks || []).forEach((t) => {
+    tracks.forEach((t, idx) => {
       const li = document.createElement("li");
       li.className = "pl-tracks__row";
       const lab = (t.title || "—") + (t.artist ? " — " + t.artist : "");
@@ -399,7 +482,11 @@
       playMain.setAttribute("aria-label", "Включить: " + lab);
       playMain.textContent = lab;
       playMain.addEventListener("click", () => {
-        if (!loadTrack(t.url)) return;
+        const ok = loadTrack(t.url, {
+          playlist: { plId: id, urls, index: idx },
+        });
+        if (!ok) return;
+        highlightPlRow(idx);
         requestAnimationFrame(() => {
           try {
             playerWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -423,6 +510,13 @@
       li.appendChild(delB);
       plTracks.appendChild(li);
     });
+
+    if (playlistQueue && playlistQueue.plId === id) {
+      highlightPlRow(playlistQueue.index);
+    } else {
+      highlightPlRow(-1);
+    }
+
     plListView.hidden = true;
     plDetail.hidden = false;
   }
@@ -431,6 +525,7 @@
     plDetail.hidden = true;
     plListView.hidden = false;
     currentPlId = null;
+    highlightPlRow(-1);
   });
 
   plDeleteList.addEventListener("click", async () => {
@@ -529,13 +624,47 @@
     widget.toggle();
   });
 
+  function loadPlaylistStep(delta) {
+    const pl = playlistQueue;
+    if (!pl || pl.urls.length < 2) return false;
+    const j = pl.index + delta;
+    if (j < 0 || j >= pl.urls.length) return false;
+    const url = pl.urls[j];
+    if (
+      !loadTrack(url, {
+        playlist: { plId: pl.plId, urls: pl.urls, index: j },
+      })
+    ) {
+      return false;
+    }
+    if (currentPlId === pl.plId && !plDetail.hidden) {
+      highlightPlRow(j);
+    }
+    requestAnimationFrame(() => {
+      try {
+        playerWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (e) {
+        /* */
+      }
+    });
+    return true;
+  }
+
   prevBtn.addEventListener("click", () => {
     if (!widget) return;
+    const pl = playlistQueue;
+    if (pl && pl.urls.length > 1 && pl.index > 0) {
+      if (loadPlaylistStep(-1)) return;
+    }
     widget.getPosition((pos) => widget.seekTo(Math.max(0, pos - 15000)));
   });
 
   nextBtn.addEventListener("click", () => {
     if (!widget) return;
+    const pl = playlistQueue;
+    if (pl && pl.urls.length > 1 && pl.index < pl.urls.length - 1) {
+      if (loadPlaylistStep(1)) return;
+    }
     widget.getPosition((pos) =>
       widget.getDuration((dur) =>
         widget.seekTo(Math.min(dur || pos + 15000, pos + 15000))

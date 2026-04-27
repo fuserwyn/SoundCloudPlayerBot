@@ -546,6 +546,11 @@ body {
   border-radius: 10px;
 }
 
+.pl-tracks__row--current {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
 .pl-tracks__main {
   flex: 1;
   min-width: 0;
