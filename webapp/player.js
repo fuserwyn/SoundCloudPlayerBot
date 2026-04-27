@@ -495,6 +495,7 @@
   }
 
   function renderResultsStatus(text) {
+    resultsBox.className = "results";
     resultsBox.innerHTML = `<div class="results__status">${escapeHtml(text)}</div>`;
     showResultsView();
   }
@@ -515,13 +516,21 @@
       renderResultsStatus("Ничего не нашёл. Попробуй переформулировать запрос.");
       return;
     }
-    const frag = document.createDocumentFragment();
+    const head = document.createElement("h2");
+    head.className = "results__head";
+    head.textContent = "Результаты";
+
+    const scroll = document.createElement("div");
+    scroll.className = "results__scroll";
+    scroll.setAttribute("role", "list");
+
     items.forEach((it) => {
       const wrap = document.createElement("div");
       wrap.className = "result-wrap";
+      wrap.setAttribute("role", "listitem");
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "result";
+      btn.className = "result result--sc-card";
       btn.dataset.url = it.url;
       const cover = document.createElement("div");
       cover.className = "result__cover";
@@ -530,21 +539,19 @@
       }
       const body = document.createElement("div");
       body.className = "result__body";
-      body.innerHTML = `
-        <div class="result__title">${escapeHtml(it.title || "Без названия")}</div>
-        <div class="result__artist">${escapeHtml(it.artist || "")}</div>
-      `;
-      const dur = document.createElement("div");
-      dur.className = "result__duration";
       const sec = it.duration
         ? typeof it.duration === "number" && it.duration > 1000
           ? it.duration / 1000
           : it.duration
         : 0;
-      dur.textContent = formatDuration(sec);
+      const durStr = formatDuration(sec);
+      body.innerHTML = `
+        <div class="result__title">${escapeHtml(it.title || "Без названия")}</div>
+        <div class="result__artist">${escapeHtml(it.artist || "")}</div>
+        ${durStr ? `<div class="result__duration">${escapeHtml(durStr)}</div>` : ""}
+      `;
       btn.appendChild(cover);
       btn.appendChild(body);
-      btn.appendChild(dur);
       btn.addEventListener("click", () => loadTrack(it.url, { thumbnail: it.thumbnail }));
       wrap.appendChild(btn);
 
@@ -563,10 +570,12 @@
         wrap.appendChild(plRow);
       }
 
-      frag.appendChild(wrap);
+      scroll.appendChild(wrap);
     });
+    resultsBox.className = "results results--sc";
     resultsBox.innerHTML = "";
-    resultsBox.appendChild(frag);
+    resultsBox.appendChild(head);
+    resultsBox.appendChild(scroll);
     showResultsView();
   }
 
