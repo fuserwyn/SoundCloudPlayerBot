@@ -38,6 +38,11 @@
   const plDeleteList = document.getElementById("plDeleteList");
   const plDetailTitle = document.getElementById("plDetailTitle");
   const plTracks = document.getElementById("plTracks");
+  const playerPlRow = document.getElementById("playerPlRow");
+  const playerPlAdd = document.getElementById("playerPlAdd");
+  const playerPlHint = document.getElementById("playerPlHint");
+  const playerPlHintNo = document.getElementById("playerPlHintNo");
+  const playerPlPickSlot = document.getElementById("playerPlPickSlot");
 
   const SC_URL_RE = /https?:\/\/(?:(?:www|m|on)\.)?soundcloud\.com\/[^\s]+/i;
   const SEARCH_DEBOUNCE_MS = 450;
@@ -103,6 +108,8 @@
   /** Очередь при воспроизведении из плейлиста: листать треки кнопками вместо ±15 с. */
   let playlistQueue = null;
   let lastTrackLoadAt = 0;
+  let lastLoadedTrackUrl = "";
+  let nowPlaying = { url: "", title: "", artist: "", thumbnail: null };
 
   function setPlayBtn(playing) {
     isPlaying = playing;
@@ -165,9 +172,70 @@
     });
   }
 
+  function setNowPlaying(p) {
+    nowPlaying = {
+      url: p.url != null ? p.url : nowPlaying.url,
+      title: p.title != null ? p.title : nowPlaying.title,
+      artist: p.artist != null ? p.artist : nowPlaying.artist,
+      thumbnail: p.thumbnail !== undefined ? p.thumbnail : nowPlaying.thumbnail,
+    };
+  }
+
   function updateMeta(sound) {
+    if (!sound) return;
     metaTitle.textContent = sound.title || "Без названия";
     metaArtist.textContent = (sound.user && sound.user.username) || "";
+    const u = sound.permalink_url || lastLoadedTrackUrl;
+    const art =
+      sound.artwork_url || (sound.user && sound.user.avatar_url) || null;
+    setNowPlaying({
+      url: u,
+      title: sound.title || "Без названия",
+      artist: (sound.user && sound.user.username) || "",
+      thumbnail: art,
+    });
+    void syncPlayerPlaylistRow();
+  }
+
+  async function syncPlayerPlaylistRow() {
+    if (!playerPlRow) return;
+    if (!initData || !nowPlaying.url || !nowPlaying.url.startsWith("http")) {
+      playerPlRow.classList.add("hidden");
+      return;
+    }
+    const res = await apiGet(
+      "/api/playlists/track_status?url=" + encodeURIComponent(nowPlaying.url)
+    );
+    if (!res.ok) {
+      playerPlRow.classList.add("hidden");
+      return;
+    }
+    const st = await res.json();
+    playerPlRow.classList.remove("hidden");
+    if (playerPlHint) playerPlHint.classList.add("hidden");
+    if (playerPlHintNo) playerPlHintNo.classList.add("hidden");
+    if (playerPlAdd) playerPlAdd.classList.remove("hidden");
+    if (playerPlPickSlot) playerPlPickSlot.innerHTML = "";
+    if (st.playlists_total === 0) {
+      if (playerPlAdd) playerPlAdd.classList.add("hidden");
+      if (playerPlHintNo) {
+        playerPlHintNo.classList.remove("hidden");
+        playerPlHintNo.textContent =
+          "Создай плейлист во вкладке «Плейлисты».";
+      }
+      return;
+    }
+    if (st.in_all) {
+      if (playerPlAdd) playerPlAdd.classList.add("hidden");
+      if (playerPlHint) {
+        playerPlHint.classList.remove("hidden");
+        playerPlHint.textContent = "Трек уже во всех плейлистах";
+      }
+      return;
+    }
+    if (playerPlAdd) {
+      playerPlAdd.textContent = "В плейлист…";
+    }
   }
 
   function showPlayerView() {
@@ -216,6 +284,14 @@
     if (!match) return false;
     const trackUrl = match[0];
     lastTrackLoadAt = Date.now();
+    lastLoadedTrackUrl = trackUrl;
+    setNowPlaying({
+      url: trackUrl,
+      title: "Загружаю…",
+      artist: "",
+      thumbnail: null,
+    });
+    void syncPlayerPlaylistRow();
 
     if (opts && opts.playlist) {
       playlistQueue = {
@@ -352,7 +428,7 @@
         addBtn.textContent = "В плейлист…";
         addBtn.addEventListener("click", (e) => {
           e.stopPropagation();
-          void openPlPicker(it, plRow, addBtn);
+          void openPlPickerForItem(it, plRow, addBtn);
         });
         plRow.appendChild(addBtn);
         wrap.appendChild(plRow);
@@ -365,10 +441,11 @@
     showResultsView();
   }
 
-  async function openPlPicker(it, plRow, addBtn) {
+  async function openPlPickerForItem(item, rowEl, addBtn) {
     if (!initData) return;
+    const pickParent = rowEl.querySelector(".player__plpick") || rowEl;
     addBtn.disabled = true;
-    plRow.querySelectorAll(".pl-pick").forEach((n) => n.remove());
+    pickParent.querySelectorAll(".pl-pick").forEach((n) => n.remove());
     if (plCache === null) {
       plCache = await fetchPlSummaries();
     }
@@ -378,7 +455,7 @@
       tip.style.margin = "0";
       tip.style.fontSize = "12px";
       tip.textContent = "Сначала создай плейлист во вкладке «Плейлисты».";
-      plRow.appendChild(tip);
+      pickParent.appendChild(tip);
       addBtn.disabled = false;
       return;
     }
@@ -390,15 +467,16 @@
       b.addEventListener("click", async (e) => {
         e.stopPropagation();
         const res = await apiJson("POST", `/api/playlists/${pl.id}/tracks`, {
-          url: it.url,
-          title: it.title,
-          artist: it.artist,
-          thumbnail: it.thumbnail || undefined,
+          url: item.url,
+          title: item.title,
+          artist: item.artist,
+          thumbnail: item.thumbnail || undefined,
         });
-        plRow.querySelectorAll(".pl-pick").forEach((n) => n.remove());
+        pickParent.querySelectorAll(".pl-pick").forEach((n) => n.remove());
         if (res.ok) {
           addBtn.textContent = "✓ " + pl.name;
           plCache = null;
+          void syncPlayerPlaylistRow();
         } else {
           const data = await res.json().catch(() => ({}));
           addBtn.textContent = (data && data.error) || "Ошибка";
@@ -408,12 +486,31 @@
           addBtn.textContent = "В плейлист…";
         }, 2000);
       });
-      plRow.appendChild(b);
+      pickParent.appendChild(b);
     });
     addBtn.disabled = false;
   }
 
   let currentPlId = null;
+
+  async function moveTrackInPlaylist(plId, fromIdx, delta) {
+    const rows = [...plTracks.querySelectorAll(".pl-tracks__row")];
+    const to = fromIdx + delta;
+    if (to < 0 || to >= rows.length) return;
+    const ids = rows.map((r) => +r.dataset.trackId);
+    const tmp = ids[fromIdx];
+    ids[fromIdx] = ids[to];
+    ids[to] = tmp;
+    const res = await apiJson("PUT", `/api/playlists/${plId}/tracks/reorder`, {
+      order: ids,
+    });
+    if (res.ok) {
+      void openPlDetail(plId);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      window.alert((d && d.error) || "Не удалось изменить порядок");
+    }
+  }
 
   async function refreshPlList() {
     if (!initData) {
@@ -485,6 +582,7 @@
     tracks.forEach((t, idx) => {
       const li = document.createElement("li");
       li.className = "pl-tracks__row";
+      li.dataset.trackId = String(t.id);
       const lab = (t.title || "—") + (t.artist ? " — " + t.artist : "");
 
       const playFromRow = () => {
@@ -539,6 +637,31 @@
       textBtn.appendChild(tArt);
       textBtn.addEventListener("click", playFromRow);
 
+      const moves = document.createElement("div");
+      moves.className = "pl-tracks__moves";
+      const up = document.createElement("button");
+      up.type = "button";
+      up.className = "pl-tracks__move";
+      up.setAttribute("aria-label", "Выше");
+      up.textContent = "↑";
+      up.disabled = idx === 0;
+      const down = document.createElement("button");
+      down.type = "button";
+      down.className = "pl-tracks__move";
+      down.setAttribute("aria-label", "Ниже");
+      down.textContent = "↓";
+      down.disabled = idx === tracks.length - 1;
+      up.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void moveTrackInPlaylist(id, idx, -1);
+      });
+      down.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void moveTrackInPlaylist(id, idx, 1);
+      });
+      moves.appendChild(up);
+      moves.appendChild(down);
+
       const delB = document.createElement("button");
       delB.type = "button";
       delB.className = "pl-tracks__del";
@@ -552,6 +675,7 @@
       li.appendChild(thumb);
       li.appendChild(playIco);
       li.appendChild(textBtn);
+      li.appendChild(moves);
       li.appendChild(delB);
       plTracks.appendChild(li);
     });
@@ -597,6 +721,22 @@
       window.alert((d && d.error) || "Не удалось создать");
     }
   });
+
+  if (playerPlAdd) {
+    playerPlAdd.addEventListener("click", (e) => {
+      e.preventDefault();
+      void openPlPickerForItem(
+        {
+          url: nowPlaying.url,
+          title: nowPlaying.title,
+          artist: nowPlaying.artist,
+          thumbnail: nowPlaying.thumbnail,
+        },
+        playerPlRow,
+        playerPlAdd
+      );
+    });
+  }
 
   tabSearchBtn.addEventListener("click", showSearchTab);
   tabPlBtn.addEventListener("click", showPlTab);

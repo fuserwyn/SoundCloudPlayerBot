@@ -291,6 +291,57 @@ async def handle_playlist_remove_track(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_playlist_track_status(request: web.Request) -> web.Response:
+    uid = _require_telegram_user(request)
+    url = (request.query.get("url") or "").strip()
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        return web.json_response(
+            {"error": "Передай ?url= с ссылкой на трек."}, status=400
+        )
+    store: AcceptanceStore = request.app["store"]
+    cov = await store.playlist_track_coverage(uid, url)
+    if cov is None:
+        return web.json_response({"error": "url"}, status=400)
+    total, with_t = cov
+    in_all = total > 0 and with_t >= total
+    return web.json_response(
+        {
+            "playlists_total": total,
+            "playlists_with_track": with_t,
+            "can_add_more": (total > 0) and (with_t < total),
+            "in_all": in_all,
+        }
+    )
+
+
+async def handle_playlist_reorder_tracks(request: web.Request) -> web.Response:
+    uid = _require_telegram_user(request)
+    try:
+        pl_id = int(request.match_info["id"])
+    except (KeyError, ValueError, TypeError):
+        return web.json_response({"error": "Bad id."}, status=400)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "Invalid JSON."}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Invalid body."}, status=400)
+    raw = body.get("order")
+    if not isinstance(raw, list) or not raw:
+        return web.json_response(
+            {"error": "Нужен массив order: [id трека, ...]."}, status=400
+        )
+    try:
+        order_ids = [int(x) for x in raw]
+    except (TypeError, ValueError):
+        return web.json_response({"error": "order: только числа id."}, status=400)
+    store: AcceptanceStore = request.app["store"]
+    err = await store.playlist_reorder_tracks(uid, pl_id, order_ids)
+    if err:
+        return web.json_response({"error": err}, status=400)
+    return web.json_response({"ok": True})
+
+
 async def handle_health(_: web.Request) -> web.Response:
     return web.Response(text="ok")
 
@@ -352,6 +403,7 @@ def build_app() -> web.Application:
     app.router.add_get("/", handle_root)
     app.router.add_get("/healthz", handle_health)
     app.router.add_get("/api/search", handle_search)
+    app.router.add_get("/api/playlists/track_status", handle_playlist_track_status)
     app.router.add_get("/api/playlists", handle_playlists_list)
     app.router.add_post("/api/playlists", handle_playlist_create)
     app.router.add_get("/api/playlists/{id}", handle_playlist_get)
@@ -359,6 +411,9 @@ def build_app() -> web.Application:
     app.router.add_post("/api/playlists/{id}/tracks", handle_playlist_add_track)
     app.router.add_delete(
         "/api/playlists/{id}/tracks/{track_id}", handle_playlist_remove_track
+    )
+    app.router.add_put(
+        "/api/playlists/{id}/tracks/reorder", handle_playlist_reorder_tracks
     )
     app.router.add_get("/{name}", handle_static)
     return app

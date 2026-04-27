@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0f0f12" />
     <meta http-equiv="Cache-Control" content="no-store" />
     <title>SoundCloud Player</title>
-    <link rel="stylesheet" href="styles.css?v=6" />
+    <link rel="stylesheet" href="styles.css?v=7" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://w.soundcloud.com/player/api.js"></script>
   </head>
@@ -103,6 +103,13 @@
           <button id="playBtn" class="ctrl-btn ctrl-btn--primary" type="button" aria-label="Play/Pause">▶</button>
           <button id="nextBtn" class="ctrl-btn" type="button" aria-label="+15s">15»</button>
         </div>
+
+        <div id="playerPlRow" class="player__plrow hidden" aria-live="polite">
+          <button type="button" id="playerPlAdd" class="result__pladd">В плейлист…</button>
+          <span id="playerPlHint" class="player__plhint hidden"></span>
+          <span id="playerPlHintNo" class="player__plhint hidden"></span>
+          <div id="playerPlPickSlot" class="player__plpick"></div>
+        </div>
       </section>
 
       <footer class="hint">
@@ -111,6 +118,6 @@
       </footer>
     </main>
 
-    <script src="player.js?v=6"></script>
+    <script src="player.js?v=7"></script>
   </body>
 </html>
