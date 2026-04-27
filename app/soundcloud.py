@@ -4,8 +4,9 @@ import asyncio
 import logging
 import re
 import shutil
+import subprocess
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -53,13 +54,24 @@ class Track:
     is_preview: bool  # True when SoundCloud only let us grab a short snippet
     thumbnail_url: str | None
     webpage_url: str
+    """Если файл > лимита Telegram: нарезка, все пути в одной папке work_dir."""
+    chunk_paths: list[Path] | None = field(default=None, repr=False)
 
     def cleanup(self) -> None:
-        try:
-            if self.file_path.exists():
-                self.file_path.unlink()
-        except OSError:
-            logger.warning("Failed to remove %s", self.file_path, exc_info=True)
+        paths: list[Path] = (
+            list(self.chunk_paths) if self.chunk_paths else [self.file_path]
+        )
+        seen: set[str] = set()
+        for fp in paths:
+            key = str(fp.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if fp.exists():
+                    fp.unlink()
+            except OSError:
+                logger.warning("Failed to remove %s", fp, exc_info=True)
         # Drop the parent dir too if we created a unique one
         parent = self.file_path.parent
         try:
@@ -159,6 +171,108 @@ def _read_audio_duration(file_path: Path) -> int:
         return 0
 
 
+def _ffprobe_duration_sec(path: Path) -> float:
+    r = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if r.returncode != 0 or not (r.stdout or "").strip():
+        return 0.0
+    try:
+        return float(r.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def _audio_duration_seconds(path: Path) -> float:
+    d = _read_audio_duration(path)
+    if d > 0:
+        return float(d)
+    return _ffprobe_duration_sec(path)
+
+
+def read_mp3_duration_seconds(file_path: Path) -> int:
+    """Длительность готового mp3 (чанк или целиком) в секундах."""
+    d = _read_audio_duration(file_path)
+    if d > 0:
+        return d
+    return int(_ffprobe_duration_sec(file_path) or 0)
+
+
+def _ffmpeg_segment_to_chunks(
+    src: Path, work_dir: Path, segment_seconds: float
+) -> list[Path]:
+    for old in work_dir.glob("chunk_*.mp3"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    out_tmpl = str(work_dir / "chunk_%03d.mp3")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(src),
+        "-f",
+        "segment",
+        "-segment_time",
+        f"{segment_seconds:.6f}",
+        "-c",
+        "copy",
+        "-reset_timestamps",
+        "1",
+        out_tmpl,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+    if r.returncode != 0:
+        logger.error(
+            "ffmpeg segment failed: %s",
+            (r.stderr or r.stdout or "")[:2500],
+        )
+        raise SoundCloudError("Не удалось нарезать трек (ffmpeg).")
+    parts = sorted(work_dir.glob("chunk_*.mp3"))
+    if not parts:
+        raise SoundCloudError("Нарезка не создала файлов.")
+    return parts
+
+
+def _split_mp3_into_chunks(src: Path, max_bytes: int, work_dir: Path) -> list[Path]:
+    """Делит один mp3 на несколько, каждый ≤ max_bytes (Telegram Bot API)."""
+    size = src.stat().st_size
+    if size <= max_bytes:
+        return [src]
+    dur = _audio_duration_seconds(src)
+    if dur <= 0:
+        raise SoundCloudError("Не удалось определить длительность для нарезки.")
+    # Цель по размеру с запасом под VBR
+    target = max(int(max_bytes * 0.82), 1024 * 1024)
+    n = max(2, (size + target - 1) // target)
+    for _ in range(14):
+        seg_dur = dur / n
+        parts = _ffmpeg_segment_to_chunks(src, work_dir, seg_dur)
+        if all(p.stat().st_size <= max_bytes for p in parts):
+            try:
+                src.unlink()
+            except OSError as exc:
+                logger.warning("Remove source after split: %s", exc)
+            return parts
+        n = n + max(1, n // 3)
+    raise SoundCloudError(
+        "Не удалось нарезать трек: части всё ещё больше лимита Telegram (50 МБ)."
+    )
+
+
 def _search_sync(query: str, limit: int) -> list[SearchResult]:
     opts: dict[str, Any] = {
         "quiet": True,
@@ -254,7 +368,15 @@ async def download_track(
 
     size = track.file_path.stat().st_size
     if size > max_bytes:
-        track.cleanup()
-        raise TrackTooLargeError(size, max_bytes)
+        try:
+            parts = await asyncio.to_thread(
+                _split_mp3_into_chunks, track.file_path, max_bytes, work_dir
+            )
+        except Exception:
+            track.cleanup()
+            shutil.rmtree(work_dir, ignore_errors=True)
+            raise
+        track.chunk_paths = parts
+        track.file_path = parts[0]
 
     return track

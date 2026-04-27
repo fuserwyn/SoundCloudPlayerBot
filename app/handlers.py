@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import uuid
 from collections import OrderedDict
 from urllib.parse import quote
@@ -33,14 +34,24 @@ from app.soundcloud import (
     SearchResult,
     SoundCloudError,
     Track,
-    TrackTooLargeError,
     download_track,
     find_soundcloud_url,
+    read_mp3_duration_seconds,
     search_tracks,
     tag_id3,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_mp3_filename(title: str, part: int, total: int) -> str:
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", (title or "track").strip()) or "track"
+    if len(s) > 100:
+        s = s[:100].rstrip()
+    if total > 1:
+        return f"{s} ({part}-{total}).mp3"
+    return f"{s}.mp3"
+
 
 WELCOME_TEXT = (
     "Привет! Я работаю с SoundCloud:\n\n"
@@ -380,14 +391,6 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 download_root=settings.download_dir,
                 max_bytes=settings.max_upload_bytes,
             )
-        except TrackTooLargeError as exc:
-            text = (
-                f"Трек весит {exc.size_bytes / 1024 / 1024:.1f} МБ — больше лимита "
-                f"Telegram (50 МБ). Пропускаю."
-            )
-            if webapp_url:
-                text += " В плеере Mini App послушать можно."
-            return text
         except SoundCloudError:
             logger.warning("Failed to download %s", url)
             return "Не скачал с SoundCloud, пропускаю."
@@ -397,7 +400,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
 
         try:
             bot_tag = await get_bot_tag(target.bot)
-            caption = f"{hbold(track.title)}\n{track.artist}"
+            base_caption = f"{hbold(track.title)}\n{track.artist}"
             if track.is_preview:
                 cap_extra = (
                     f"\n\n⚠️ Это превью ~{track.actual_duration} с "
@@ -408,22 +411,36 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                     cap_extra += " Полный трек — кнопка «Открыть в плеере» / на SoundCloud."
                 else:
                     cap_extra += " Полный трек — на SoundCloud, если открыт поток."
-                caption += cap_extra
+                base_caption += cap_extra
             if bot_tag:
-                caption += f"\n\nvia {bot_tag}"
+                base_caption += f"\n\nvia {bot_tag}"
 
-            await target.bot.send_chat_action(
-                target.chat.id, ChatAction.UPLOAD_VOICE
-            )
-            tag_id3(track.file_path, bot_tag)
-            await target.answer_audio(
-                audio=FSInputFile(track.file_path, filename=f"{track.title}.mp3"),
-                caption=caption,
-                title=track.title,
-                performer=track.artist,
-                duration=track.actual_duration or track.duration or None,
-                reply_markup=make_track_keyboard(track.webpage_url),
-            )
+            parts = list(track.chunk_paths) if track.chunk_paths else [track.file_path]
+            n = len(parts)
+            if n > 1:
+                base_caption += f"\n\nФайл разбит на {n} частей по лимиту Telegram (50 МБ)."
+
+            for idx, part_path in enumerate(parts):
+                caption = base_caption
+                if n > 1:
+                    caption += f"\nЧасть {idx + 1} из {n}."
+                await target.bot.send_chat_action(
+                    target.chat.id, ChatAction.UPLOAD_VOICE
+                )
+                tag_id3(part_path, bot_tag)
+                fname = _safe_mp3_filename(track.title, idx + 1, n)
+                part_dur = read_mp3_duration_seconds(part_path) or None
+                await target.answer_audio(
+                    audio=FSInputFile(part_path, filename=fname),
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    title=track.title,
+                    performer=track.artist,
+                    duration=part_dur,
+                    reply_markup=make_track_keyboard(track.webpage_url)
+                    if idx == 0
+                    else None,
+                )
         except Exception:
             logger.exception("Failed to send audio for %s", url)
             return "Не получилось отправить файл в Telegram."
