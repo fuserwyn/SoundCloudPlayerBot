@@ -26,6 +26,20 @@ MAX_PLAYLIST_NAME_LEN = 64
 MAX_TRACKS_IN_PLAYLIST = 150
 
 
+def _thumb_out(val: object) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s or None
+
+
+def _thumb_in(url: str | None) -> str | None:
+    s = (url or "").strip()
+    if not s:
+        return None
+    return s[:2000]
+
+
 @dataclass(frozen=True)
 class Acceptance:
     user_id: int
@@ -47,6 +61,7 @@ class PlaylistEntry:
     track_url: str
     title: str
     artist: str
+    thumbnail_url: str | None = None
 
 
 class AcceptanceStore:
@@ -121,6 +136,10 @@ class AcceptanceStore:
                     "CREATE INDEX IF NOT EXISTS idx_playlist_tracks_pl "
                     "ON playlist_tracks (playlist_id, sort_order)"
                 )
+                await conn.execute(
+                    "ALTER TABLE playlist_tracks "
+                    "ADD COLUMN IF NOT EXISTS thumbnail_url TEXT"
+                )
             logger.info("Acceptance DB ready (PostgreSQL)")
             return
 
@@ -186,6 +205,12 @@ class AcceptanceStore:
                 "CREATE INDEX IF NOT EXISTS idx_playlist_tracks_pl "
                 "ON playlist_tracks (playlist_id, sort_order)"
             )
+            cur = await db.execute("PRAGMA table_info(playlist_tracks)")
+            col_names = {r[1] for r in await cur.fetchall()}
+            if "thumbnail_url" not in col_names:
+                await db.execute(
+                    "ALTER TABLE playlist_tracks ADD COLUMN thumbnail_url TEXT"
+                )
             await db.commit()
         logger.info("Acceptance DB ready (SQLite) at %s", self._db_path)
 
@@ -470,7 +495,7 @@ class AcceptanceStore:
                     return None
                 rows = await conn.fetch(
                     """
-                    SELECT t.id, t.track_url, t.title, t.artist
+                    SELECT t.id, t.track_url, t.title, t.artist, t.thumbnail_url
                     FROM playlist_tracks t
                     WHERE t.playlist_id = $1
                     ORDER BY t.sort_order ASC, t.id ASC
@@ -483,6 +508,7 @@ class AcceptanceStore:
                         track_url=str(r["track_url"]),
                         title=str(r["title"]),
                         artist=str(r["artist"]),
+                        thumbnail_url=_thumb_out(r["thumbnail_url"]),
                     )
                     for r in rows
                 ]
@@ -498,7 +524,7 @@ class AcceptanceStore:
                 return None
             cur = await db.execute(
                 """
-                SELECT t.id, t.track_url, t.title, t.artist
+                SELECT t.id, t.track_url, t.title, t.artist, t.thumbnail_url
                 FROM playlist_tracks t
                 WHERE t.playlist_id = ?
                 ORDER BY t.sort_order ASC, t.id ASC
@@ -512,6 +538,7 @@ class AcceptanceStore:
                     track_url=str(r[1]),
                     title=str(r[2]),
                     artist=str(r[3]),
+                    thumbnail_url=_thumb_out(r[4] if len(r) > 4 else None),
                 )
                 for r in rows
             ]
@@ -523,10 +550,12 @@ class AcceptanceStore:
         track_url: str,
         title: str,
         artist: str,
+        thumbnail_url: str | None = None,
     ) -> str | None:
         """None если ок, иначе текст ошибки."""
         t_title = (title or "Без названия")[:500]
         t_artist = (artist or "")[:500]
+        t_thumb = _thumb_in(thumbnail_url)
         url = track_url.strip()
         if not url:
             return "Пустая ссылка."
@@ -552,12 +581,13 @@ class AcceptanceStore:
                     await conn.execute(
                         """
                         INSERT INTO playlist_tracks
-                            (playlist_id, track_url, title, artist, sort_order, created_at)
+                            (playlist_id, track_url, title, artist, sort_order,
+                             created_at, thumbnail_url)
                         VALUES (
                             $1, $2, $3, $4,
                             (SELECT COALESCE(MAX(t2.sort_order), 0) + 1
                              FROM playlist_tracks t2 WHERE t2.playlist_id = $1),
-                            $5
+                            $5, $6
                         )
                         """,
                         playlist_id,
@@ -565,6 +595,7 @@ class AcceptanceStore:
                         t_title,
                         t_artist,
                         now,
+                        t_thumb,
                     )
                 except asyncpg.UniqueViolationError:
                     return "Этот трек уже в плейлисте."
@@ -591,11 +622,12 @@ class AcceptanceStore:
                     cur = await db.execute(
                         """
                         INSERT INTO playlist_tracks
-                            (playlist_id, track_url, title, artist, sort_order, created_at)
+                            (playlist_id, track_url, title, artist, sort_order,
+                             created_at, thumbnail_url)
                         VALUES (?, ?, ?, ?,
                             (SELECT COALESCE(MAX(t2.sort_order), 0) + 1
                              FROM playlist_tracks t2 WHERE t2.playlist_id = ?),
-                            ?)
+                            ?, ?)
                         """,
                         (
                             playlist_id,
@@ -604,6 +636,7 @@ class AcceptanceStore:
                             t_artist,
                             playlist_id,
                             now.isoformat(timespec="seconds"),
+                            t_thumb,
                         ),
                     )
                 except sqlite3.IntegrityError:

@@ -280,6 +280,16 @@
       .replace(/'/g, "&#39;");
   }
 
+  function thumbStyleUrl(u) {
+    if (!u || typeof u !== "string") return "";
+    let s = u.trim();
+    if (s.startsWith("//")) s = "https:" + s;
+    if (s.startsWith("http://") && s.indexOf("sndcdn.com") !== -1) {
+      s = "https://" + s.slice(7);
+    }
+    return s;
+  }
+
   function renderResultsStatus(text) {
     resultsBox.innerHTML = `<div class="results__status">${escapeHtml(text)}</div>`;
     showResultsView();
@@ -383,6 +393,7 @@
           url: it.url,
           title: it.title,
           artist: it.artist,
+          thumbnail: it.thumbnail || undefined,
         });
         plRow.querySelectorAll(".pl-pick").forEach((n) => n.remove());
         if (res.ok) {
@@ -476,12 +487,7 @@
       li.className = "pl-tracks__row";
       const lab = (t.title || "—") + (t.artist ? " — " + t.artist : "");
 
-      const playMain = document.createElement("button");
-      playMain.type = "button";
-      playMain.className = "pl-tracks__main";
-      playMain.setAttribute("aria-label", "Включить: " + lab);
-      playMain.textContent = lab;
-      playMain.addEventListener("click", () => {
+      const playFromRow = () => {
         const ok = loadTrack(t.url, {
           playlist: { plId: id, urls, index: idx },
         });
@@ -494,7 +500,44 @@
             /* */
           }
         });
+      };
+
+      const thumb = document.createElement("button");
+      thumb.type = "button";
+      thumb.className = "pl-tracks__thumb";
+      thumb.setAttribute("aria-label", "Обложка, включить: " + lab);
+      const tu = thumbStyleUrl(t.thumbnail);
+      if (tu) {
+        thumb.style.backgroundImage = `url("${tu.replace(/"/g, '\\"')}")`;
+      }
+      thumb.addEventListener("click", (e) => {
+        e.stopPropagation();
+        playFromRow();
       });
+
+      const playIco = document.createElement("button");
+      playIco.type = "button";
+      playIco.className = "pl-tracks__playico";
+      playIco.setAttribute("aria-label", "Включить");
+      playIco.textContent = "▶";
+      playIco.addEventListener("click", (e) => {
+        e.stopPropagation();
+        playFromRow();
+      });
+
+      const textBtn = document.createElement("button");
+      textBtn.type = "button";
+      textBtn.className = "pl-tracks__main";
+      textBtn.setAttribute("aria-label", "Включить: " + lab);
+      const tTitle = document.createElement("div");
+      tTitle.className = "pl-tracks__title";
+      tTitle.textContent = t.title || "—";
+      const tArt = document.createElement("div");
+      tArt.className = "pl-tracks__artist";
+      tArt.textContent = t.artist || "";
+      textBtn.appendChild(tTitle);
+      textBtn.appendChild(tArt);
+      textBtn.addEventListener("click", playFromRow);
 
       const delB = document.createElement("button");
       delB.type = "button";
@@ -506,7 +549,9 @@
         const d = await apiJson("DELETE", `/api/playlists/${id}/tracks/${t.id}`);
         if (d.ok) void openPlDetail(id);
       });
-      li.appendChild(playMain);
+      li.appendChild(thumb);
+      li.appendChild(playIco);
+      li.appendChild(textBtn);
       li.appendChild(delB);
       plTracks.appendChild(li);
     });

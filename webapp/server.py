@@ -226,6 +226,7 @@ async def handle_playlist_get(request: web.Request) -> web.Response:
                     "url": t.track_url,
                     "title": t.title,
                     "artist": t.artist,
+                    "thumbnail": t.thumbnail_url,
                 }
                 for t in tracks
             ],
@@ -260,10 +261,18 @@ async def handle_playlist_add_track(request: web.Request) -> web.Response:
     url = (body.get("url") or "").strip()
     title = (body.get("title") or "Без названия").strip()
     artist = (body.get("artist") or "").strip()
+    raw_thumb = body.get("thumbnail")
+    thumb = None
+    if isinstance(raw_thumb, str) and raw_thumb.strip().startswith(
+        ("http://", "https://", "//")
+    ):
+        thumb = _normalize_artwork_url(raw_thumb.strip())
     if not url:
         return web.json_response({"error": "Нужен url."}, status=400)
     store: AcceptanceStore = request.app["store"]
-    err = await store.playlist_add_track(uid, pl_id, url, title, artist)
+    err = await store.playlist_add_track(
+        uid, pl_id, url, title, artist, thumb
+    )
     if err:
         return web.json_response({"error": err}, status=400)
     return web.json_response({"ok": True})

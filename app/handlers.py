@@ -10,6 +10,7 @@ from urllib.parse import quote
 from aiogram import F, Router
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 from aiogram.enums import ChatAction, ChatType, ParseMode
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -161,19 +162,21 @@ class _UrlCache:
 
 
 class _PickMetaCache:
-    """Название/артист для строки в списке — чтобы после выбора показать подпись к кнопкам."""
+    """Название/артист/превью обложки для строки в списке (в т.ч. в БД плейлиста)."""
 
     def __init__(self, max_items: int = SEARCH_CACHE_SIZE) -> None:
-        self._items: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        self._items: OrderedDict[str, tuple[str, str, str | None]] = OrderedDict()
         self._max = max_items
 
-    def set(self, key: str, title: str, artist: str) -> None:
-        self._items[key] = (title, artist)
+    def set(
+        self, key: str, title: str, artist: str, thumbnail: str | None = None
+    ) -> None:
+        self._items[key] = (title, artist, thumbnail)
         self._items.move_to_end(key)
         while len(self._items) > self._max:
             self._items.popitem(last=False)
 
-    def get(self, key: str) -> tuple[str, str] | None:
+    def get(self, key: str) -> tuple[str, str, str | None] | None:
         t = self._items.get(key)
         if t is not None:
             self._items.move_to_end(key)
@@ -295,6 +298,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 key,
                 (item.title or "Без названия").strip(),
                 (item.artist or "").strip(),
+                item.thumbnail,
             )
             rows.append(
                 [
@@ -641,11 +645,21 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await deliver_track(message, status, url)
             return
 
-        await message.answer(
-            WELCOME_TEXT,
-            disable_web_page_preview=True,
-            reply_markup=start_keyboard(),
-        )
+        try:
+            await message.answer(
+                WELCOME_TEXT,
+                disable_web_page_preview=True,
+                reply_markup=start_keyboard(),
+            )
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "/start: reply with WebApp keyboard failed, sending text only: %s",
+                exc,
+            )
+            await message.answer(
+                WELCOME_TEXT,
+                disable_web_page_preview=True,
+            )
 
     @router.message(Command("help"))
     async def on_help(message: Message) -> None:
@@ -672,10 +686,17 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 "Mini App плеер сейчас недоступен — WEBAPP_URL не настроен."
             )
             return
-        await message.answer(
-            "Открыть встроенный плеер:",
-            reply_markup=start_keyboard(),
-        )
+        try:
+            await message.answer(
+                "Открыть встроенный плеер:",
+                reply_markup=start_keyboard(),
+            )
+        except TelegramBadRequest as exc:
+            logger.warning("/player: WebApp keyboard failed: %s", exc)
+            await message.answer(
+                "Открыть плеер: проверь WEBAPP_URL (нужен https). "
+                "Сейчас кнопку показать не удалось — открой мини-апп из меня бота вручную."
+            )
 
     @router.message(
         Command("pl", "playlists"),
@@ -922,7 +943,10 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             return
 
         meta = pick_meta.get(key)
-        title, artist = meta if meta else (None, None)
+        if meta:
+            title, artist = meta[0], meta[1]
+        else:
+            title, artist = None, None
         if title:
             lines: list[str] = [title]
             if artist:
@@ -1118,9 +1142,12 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await cq.answer("Ссылка устарела.", show_alert=True)
             return
         meta = pick_meta.get(key)
-        title, ar = (meta[0], meta[1]) if meta else ("Без названия", "")
+        if meta:
+            title, ar, th = meta[0], meta[1], meta[2]
+        else:
+            title, ar, th = "Без названия", "", None
         err = await acceptance_store.playlist_add_track(
-            cq.from_user.id, pl_id, url, title, ar
+            cq.from_user.id, pl_id, url, title, ar, th
         )
         if err:
             await cq.answer(err, show_alert=True)
