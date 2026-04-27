@@ -547,32 +547,35 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 ]
             )
         for e in entries:
-            one: list[InlineKeyboardButton] = []
+            # «✕» слева — в клиентах обычно узкая колонка; длинный текст справа шире.
+            del_btn = InlineKeyboardButton(
+                text="✕",
+                callback_data=f"{CALLBACK_PL_RMT}{playlist_id}:{e.id}",
+            )
             if webapp_url:
                 pl_lbl = _playlist_track_button_label(e, lang)
-                one.append(
-                    InlineKeyboardButton(
-                        text=pl_lbl,
-                        callback_data=f"{CALLBACK_TMA_PL}{playlist_id}:{e.id}",
-                    )
+                rrows.append(
+                    [
+                        del_btn,
+                        InlineKeyboardButton(
+                            text=pl_lbl,
+                            callback_data=f"{CALLBACK_TMA_PL}{playlist_id}:{e.id}",
+                        ),
+                    ]
                 )
             else:
                 title = (e.title or i18n.t(lang, "no_title")).strip() or "—"
                 ar = (e.artist or "").strip()
                 ext = f"{title} — {ar}" if ar else title
-                one.append(
-                    InlineKeyboardButton(
-                        text=_truncate(f"🌐 {ext}", MAX_BUTTON_TEXT),
-                        url=e.track_url,
-                    )
+                rrows.append(
+                    [
+                        del_btn,
+                        InlineKeyboardButton(
+                            text=_truncate(f"🌐 {ext}", MAX_BUTTON_TEXT),
+                            url=e.track_url,
+                        ),
+                    ]
                 )
-            one.append(
-                InlineKeyboardButton(
-                    text="✕",
-                    callback_data=f"{CALLBACK_PL_RMT}{playlist_id}:{e.id}",
-                )
-            )
-            rrows.append(one)
         rrows.append(
             [
                 InlineKeyboardButton(

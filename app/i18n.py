@@ -155,7 +155,7 @@ _STR: dict[str, dict[str, str]] = {
             "Сейчас кнопку показать не удалось — открой мини-апп из меня бота вручную."
         ),
         bulk_dl_all="⬇ Скачать все mp3 (≤{m})",
-        pl_del_btn="🗑 Удалить плейлист",
+        pl_del_btn="🗑 Удалить",
         preview_note=(
             "\n\n⚠️ Это превью ~{actual} с (метаданные: {meta}) — "
             "так настроил правообладатель, полный трек в MP3 в чат не отдать."
@@ -364,7 +364,7 @@ _STR: dict[str, dict[str, str]] = {
             "The button couldn’t be shown — open the mini app from the bot menu."
         ),
         bulk_dl_all="⬇ Download all mp3 (≤{m})",
-        pl_del_btn="🗑 Delete playlist",
+        pl_del_btn="🗑 Delete",
         preview_note=(
             "\n\n⚠️ This is a ~{actual} s preview (metadata: {meta}) — "
             "as set by the rights holder; the full track can’t be sent as one MP3 here."
