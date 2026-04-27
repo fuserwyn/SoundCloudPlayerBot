@@ -8,9 +8,12 @@ services:
       - .env
     environment:
       DOWNLOAD_DIR: /data/downloads
+      # SQLite must live on a named volume or it is lost on every container recreate.
+      DB_PATH: /data/db/scbot.db
       TZ: Europe/Moscow
     volumes:
       - downloads:/data/downloads
+      - scbot_db:/data/db
     stop_grace_period: 10s
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.gethostbyname('api.telegram.org')"]
@@ -20,3 +23,4 @@ services:
 
 volumes:
   downloads:
+  scbot_db:
