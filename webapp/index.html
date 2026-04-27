@@ -3,10 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f0f12" />
+    <meta name="theme-color" content="#0a0a0e" />
     <meta http-equiv="Cache-Control" content="no-store" />
     <title>SoundCloud Player</title>
-    <link rel="stylesheet" href="styles.css?v=7" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css?v=8" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://w.soundcloud.com/player/api.js"></script>
   </head>
@@ -14,17 +20,24 @@
     <main class="app">
       <header class="app__header">
         <div class="brand">
-          <span class="brand__dot"></span>
-          <span class="brand__name">SoundCloud Player</span>
+          <span class="brand__mark" aria-hidden="true"></span>
+          <div class="brand__text">
+            <span class="brand__name">SoundCloud</span>
+            <span class="brand__tagline">в Telegram</span>
+          </div>
         </div>
-        <button id="closeBtn" class="ghost-btn" type="button" aria-label="Закрыть">×</button>
+        <button id="closeBtn" class="ghost-btn ghost-btn--round" type="button" aria-label="Закрыть">
+          <span class="ghost-btn__x" aria-hidden="true">×</span>
+        </button>
       </header>
 
       <nav class="tabs" role="tablist" aria-label="Разделы">
+        <div class="tabs__track" role="presentation">
         <button type="button" class="tab tab--active" id="tabSearchBtn" data-panel="search">
           Поиск
         </button>
         <button type="button" class="tab" id="tabPlBtn" data-panel="pl">Плейлисты</button>
+        </div>
       </nav>
 
       <div id="panelSearch" class="tab-panel">
@@ -51,8 +64,9 @@
         <section id="results" class="results hidden" aria-live="polite"></section>
 
         <section id="empty" class="empty">
+          <div class="empty__icon" aria-hidden="true">◎</div>
           <h1>Что послушаем?</h1>
-          <p>Введи трек сверху — найду совпадения. Или открой «Плейлисты».</p>
+          <p>Введи запрос или ссылку — подберу треки. Плейлисты — соседняя вкладка.</p>
         </section>
       </div>
 
@@ -113,11 +127,12 @@
       </section>
 
       <footer class="hint">
-        Плеер — официальный SoundCloud Widget. Звук идёт, пока открыт Mini App; при полном
-        закрытии WebView обычно останавливается. Mp3 скачиванием занимается бот в чате.
+        <span class="hint__line"
+          >Widget SoundCloud. Звук, пока открыт мини-апп. MP3 — в чате с ботом.</span
+        >
       </footer>
     </main>
 
-    <script src="player.js?v=7"></script>
+    <script src="player.js?v=8"></script>
   </body>
 </html>
