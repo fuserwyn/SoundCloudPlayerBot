@@ -1,11 +1,12 @@
+# Webapp-образ для Railway: не использует COPY из build context (он может быть
+# только папкой webapp без app/ и без префикса webapp/ в путях).
+# Исходник подтягивается с GitHub по commit zip — те же RAILWAY_GIT_* что Railway
+# передаёт в Dockerfile как ARG (см. docs.railway.com → Dockerfiles).
+#
+# Локально (контекст = корень репо, где есть app/ и webapp/):
+#   docker build -f webapp/Dockerfile -t sc-webapp .
 FROM python:3.12-slim
 
-# == Railway: в настройках СЕРВИСА «webapp» обязательно: ==
-#   Source / Root Directory = ПУСТО (корень репозитория, где рядом app/ и webapp/).
-#   НЕ указывайте "webapp" — иначе COPY webapp/... и COPY app/ не существуют в контексте.
-#   Build: Dockerfile path = Dockerfile.webapp (этот файл в корне) ИЛИ webapp/Dockerfile.
-# Локально:  docker build -f Dockerfile.webapp -t sc-webapp .
-# Алиас:     docker build -f webapp/Dockerfile -t sc-webapp .   (тот же рецепт)
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -14,11 +15,42 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY webapp/requirements.txt ./
-RUN pip install -r requirements.txt
+ARG RAILWAY_GIT_REPO_OWNER
+ARG RAILWAY_GIT_REPO_NAME
+ARG RAILWAY_GIT_COMMIT_SHA
+# Для приватного репозитория: заведи в Variables и отметь «Available at Build Time» (PAT).
+ARG GITHUB_TOKEN
 
-COPY app ./app
-COPY webapp/index.html webapp/styles.css webapp/player.js webapp/server.py webapp/tg_webapp_auth.py /app/
+RUN set -eux; \
+  if [ -z "${RAILWAY_GIT_REPO_OWNER:-}" ] || [ -z "${RAILWAY_GIT_REPO_NAME:-}" ] \
+     || [ -z "${RAILWAY_GIT_COMMIT_SHA:-}" ]; then \
+    echo "RAILWAY_GIT_REPO_OWNER/NAME/COMMIT_SHA are required. On Railway they are" \
+         "injected for Git deploys. For a local build use:" \
+         "docker build -f webapp/Dockerfile -t sc-webapp ." >&2; \
+    exit 1; \
+  fi; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends ca-certificates curl unzip; \
+  rm -rf /var/lib/apt/lists/*; \
+  URL="https://github.com/${RAILWAY_GIT_REPO_OWNER}/${RAILWAY_GIT_REPO_NAME}/archive/${RAILWAY_GIT_COMMIT_SHA}.zip"; \
+  if [ -n "${GITHUB_TOKEN:-}" ]; then \
+    curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" -o /tmp/src.zip "${URL}"; \
+  else \
+    curl -fsSL -o /tmp/src.zip "${URL}"; \
+  fi; \
+  unzip -q /tmp/src.zip -d /tmp/arc; \
+  ROOT="$(find /tmp/arc -mindepth 1 -maxdepth 1 -type d | head -1)"; \
+  test -f "${ROOT}/webapp/requirements.txt"; \
+  test -f "${ROOT}/app/db.py"; \
+  cp -r "${ROOT}/app" ./app; \
+  cp "${ROOT}/webapp/index.html" "${ROOT}/webapp/styles.css" "${ROOT}/webapp/player.js" \
+     "${ROOT}/webapp/server.py" "${ROOT}/webapp/tg_webapp_auth.py" ./; \
+  cp "${ROOT}/webapp/requirements.txt" ./requirements.txt; \
+  rm -rf /tmp/arc /tmp/src.zip; \
+  pip install --no-cache-dir -r requirements.txt; \
+  apt-get purge -y curl unzip; \
+  apt-get autoremove -y; \
+  rm -rf /var/lib/apt/lists/*
 
 EXPOSE 8080
 

@@ -27,7 +27,7 @@ SoundCloudPlayerBot/
 │   ├── Dockerfile         # образ webapp; контекст сборки = корень репо
 │   └── railway.json       # builder: Dockerfile.webapp из корня (см. RAILWAY_WEBAPP.txt)
 ├── Dockerfile             # бот (Python + ffmpeg)
-├── Dockerfile.webapp      # тот же рецепт, что webapp/Dockerfile (aiohttp, порт $PORT)
+├── Dockerfile.webapp      # Railway: zip с GitHub по RAILWAY_GIT_* (без COPY из context)
 ├── RAILWAY_WEBAPP.txt     # Root Directory для сервиса webapp на Railway
 ├── railway.json           # конфиг bot-сервиса для Railway
 ├── docker-compose.yml     # для локального запуска
@@ -60,12 +60,13 @@ git push
 
 1. В этом же проекте → **+ New** → **GitHub Repo** → тот же репо.
 2. В настройках нового сервиса:
-   - **Settings → Source → Root Directory** → **оставь пусто** (корень репозитория). Не указывай `webapp`: иначе Docker не увидит `app/` и пути `webapp/...`, сборка упадёт.
-   - **Build**: Dockerfile path = **`Dockerfile.webapp`** или укажи Config as Code → **`webapp/railway.json`** (там уже `dockerfilePath`: `Dockerfile.webapp`).
+   - **Build**: Dockerfile = **`Dockerfile.webapp`** в корне репо (или Config as Code → **`webapp/railway.json`**).
+   - Образ собирается **без** `COPY` из контекста: исходник качается с GitHub по commit (переменные `RAILWAY_GIT_*` от Railway). Root Directory может быть пустым или `webapp` — на такой сборке это не ломает Dockerfile.
+   - Деплой должен быть **из GitHub**; для **приватного** репо — добавь `GITHUB_TOKEN` (PAT) в Variables с галочкой **Build Time** (см. `RAILWAY_WEBAPP.txt`).
 3. Переименуй сервис в `webapp`.
 4. **Settings → Networking → Generate Domain** → получишь URL вида `https://webapp-production-xxxx.up.railway.app`. Скопируй его.
 
-Подробнее: файл **`RAILWAY_WEBAPP.txt`** в корне репо.
+Подробнее: **`RAILWAY_WEBAPP.txt`** в корне репо.
 
 ### Шаг 4. Настрой переменные
 

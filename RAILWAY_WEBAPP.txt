@@ -1,5 +1,17 @@
-Railway: сервис мини-апп (webapp) — в UI нельзя задать «контекст Docker» через railway.json, только:
-  Settings → Source → Root Directory  =  ПУСТО  (корень репо SoundCloudPlayerBot).
-Если там указать «webapp», сборка падает: нет путей webapp/... и папки app/ в контексте.
-Build: Dockerfile = Dockerfile.webapp  (в корне репо) или config webapp/railway.json.
-Бот (отдельный сервис): Dockerfile без префикса = образ из ./Dockerfile в корне.
+Сервис Mini App (webapp) на Railway
+------------------------------------
+1) Build → Dockerfile path: Dockerfile.webapp (в корне репо) или webapp/railway.json.
+
+2) Dockerfile.webapp НЕ копирует файлы из build context: он скачивает zip с GitHub
+   по commit (ARG RAILWAY_GIT_* — Railway подставляет при деплое из Git).
+
+3) Root Directory в UI может быть ЛЮБЫМ (в т.ч. "webapp") — на сборку кода
+   это больше не влияет, пока задан Dockerfile.webapp.
+
+4) Деплой должен идти из GitHub, иначе RAILWAY_GIT_* могут быть пустыми.
+
+5) Приватный репозиторий: в Variables заведи GITHUB_TOKEN (PAT) и отметь
+   «Available at Build Time» — Dockerfile передаст его в curl к GitHub.
+
+6) Локальная сборка без Railway:  docker build -f webapp/Dockerfile -t sc-webapp .
+   (контекст — корень репозитория, где лежат app/ и webapp/.)

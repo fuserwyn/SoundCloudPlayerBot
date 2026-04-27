@@ -1,8 +1,9 @@
 FROM python:3.12-slim
 
-# Рецепт совпадает с ../Dockerfile.webapp. Контекст = КОРЕНЬ РЕПО, не папка webapp/.
-# Railway: Root Directory = пусто; путь к Dockerfile: Dockerfile.webapp или webapp/Dockerfile.
-# Локально: docker build -f webapp/Dockerfile -t sc-webapp .
+# Локальная / CI сборка из КОРНЯ репозитория (рядом app/ и webapp/):
+#   docker build -f webapp/Dockerfile -t sc-webapp .
+# Railway: используй корневой Dockerfile.webapp — он качает исходник с GitHub по
+# RAILWAY_GIT_* и не зависит от Root Directory / размера контекста.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
