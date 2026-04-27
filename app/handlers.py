@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 import uuid
 from collections import OrderedDict
@@ -7,8 +8,8 @@ from urllib.parse import quote
 
 from aiogram import F, Router
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
-from aiogram.enums import ChatAction, ChatType
-from aiogram.filters import Command, CommandStart
+from aiogram.enums import ChatAction, ChatType, ParseMode
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -24,7 +25,7 @@ from aiogram.types import (
 from aiogram.utils.markdown import hbold
 
 from app.config import Settings
-from app.db import AcceptanceStore
+from app.db import AcceptanceStore, PlaylistSummary
 from app.llm import LLMClient, LLMUnavailable
 from app.soundcloud import (
     SearchResult,
@@ -49,10 +50,12 @@ WELCOME_TEXT = (
     "3) Открой Mini App ниже — встроенный плеер с поиском и виджетом.\n"
     "4) В любом чате через @бот можно быстро найти трек и отправить ссылку — "
     "там только прослушивание в плеере или на SoundCloud; mp3 — только в этом чате "
-    "после /terms.\n\n"
+    "после /terms.\n"
+    "5) Свои плейлисты: после выбора трека в поиске — «➕ В плейлист»; смотри /pl.\n\n"
     "Команды:\n"
     "/start — это сообщение\n"
     "/player — открыть плеер\n"
+    "/pl — плейлисты\n"
     "/terms — условия использования\n"
     "/help — помощь"
 )
@@ -81,7 +84,13 @@ CALLBACK_PICK_PREFIX = "pick:"
 CALLBACK_DOWNLOAD_PREFIX = "dld:"  # скачать MP3 после выбора в списке поиска
 CALLBACK_ACCEPT_PREFIX = "accept:"
 CALLBACK_DECLINE = "decline"
+CALLBACK_PL_MENU = "plm:"  # открыть выбор плейлиста для ключа кэша
+CALLBACK_PL_ADD = "padd:"  # padd:playlist_id:cache_key
+CALLBACK_PL_VIEW = "pvv:"  # pvv:playlist_id
+CALLBACK_PL_DEL = "pdl:"  # pdl:playlist_id
+CALLBACK_PL_RMT = "rmt:"  # rmt:playlist_id:track_row_id
 MAX_BUTTON_TEXT = 60
+PLAYLIST_BUTTON_LABEL = 30
 SEARCH_LIMIT = 10
 SEARCH_CACHE_SIZE = 2000
 
@@ -313,7 +322,70 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 )
             ]
         )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="➕ В плейлист",
+                    callback_data=f"{CALLBACK_PL_MENU}{cache_key}",
+                )
+            ]
+        )
         return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _pl_summaries_keyboard(rows: list[PlaylistSummary]) -> InlineKeyboardMarkup:
+        kb: list[list[InlineKeyboardButton]] = []
+        for s in rows:
+            label = f"{_truncate(s.name, PLAYLIST_BUTTON_LABEL)} · {s.track_count}"
+            kb.append(
+                [
+                    InlineKeyboardButton(
+                        text=label,
+                        callback_data=f"{CALLBACK_PL_VIEW}{s.id}",
+                    )
+                ]
+            )
+        return InlineKeyboardMarkup(inline_keyboard=kb)
+
+    def _format_playlist_message(pl_name: str, entries) -> str:
+        head = f"🎧 {html.escape(pl_name)}"
+        if not entries:
+            return (
+                head
+                + "\n\nПока пусто. Найди трек в поиске (название или ссылка) — после "
+                "выбора в списке нажми «➕ В плейлист»."
+            )
+        lines: list[str] = []
+        for i, e in enumerate(entries, start=1):
+            t = f"{e.title} — {e.artist}" if (e.artist or "").strip() else e.title
+            lines.append(f"{i}. {html.escape(t)}")
+        return head + "\n\n" + "\n".join(lines)
+
+    def _playlist_tracks_keyboard(playlist_id: int, entries) -> InlineKeyboardMarkup:
+        rrows: list[list[InlineKeyboardButton]] = []
+        for i, e in enumerate(entries, start=1):
+            one: list[InlineKeyboardButton] = []
+            if webapp_url:
+                one.append(
+                    _player_button(webapp_url, e.track_url, f"▶ {i}"),
+                )
+            else:
+                one.append(InlineKeyboardButton(text=f"🌐 {i}", url=e.track_url))
+            one.append(
+                InlineKeyboardButton(
+                    text="🗑",
+                    callback_data=f"{CALLBACK_PL_RMT}{playlist_id}:{e.id}",
+                )
+            )
+            rrows.append(one)
+        rrows.append(
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить плейлист",
+                    callback_data=f"{CALLBACK_PL_DEL}{playlist_id}",
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(inline_keyboard=rrows)
 
     async def deliver_track(
         chat_message: Message,
@@ -424,6 +496,56 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         await _send_acceptance_prompt(message, url)
         return False
 
+    async def _open_playlist_view_message(
+        message: Message, user_id: int, pl_id: int
+    ) -> bool:
+        pl_name = await acceptance_store.playlist_name(user_id, pl_id)
+        if pl_name is None:
+            await message.reply("Плейлист не найден. Смотри /pl")
+            return False
+        tr = await acceptance_store.playlist_get_tracks(user_id, pl_id)
+        if tr is None:
+            await message.reply("Плейлист не найден. Смотри /pl")
+            return False
+        text = _format_playlist_message(pl_name, tr)
+        await message.reply(
+            text,
+            reply_markup=_playlist_tracks_keyboard(pl_id, tr),
+            parse_mode=ParseMode.HTML,
+        )
+        return True
+
+    async def _open_playlist_view_edit(cq: CallbackQuery, user_id: int, pl_id: int) -> None:
+        if not cq.message:
+            return
+        pl_name = await acceptance_store.playlist_name(user_id, pl_id)
+        if pl_name is None:
+            try:
+                await cq.message.edit_text("Плейлист не найден.")
+            except Exception:
+                pass
+            return
+        tr = await acceptance_store.playlist_get_tracks(user_id, pl_id)
+        if tr is None:
+            try:
+                await cq.message.edit_text("Плейлист не найден.")
+            except Exception:
+                pass
+            return
+        text = _format_playlist_message(pl_name, tr)
+        kb = _playlist_tracks_keyboard(pl_id, tr)
+        try:
+            await cq.message.edit_text(
+                text, reply_markup=kb, parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            try:
+                await cq.message.answer(
+                    text, reply_markup=kb, parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                pass
+
     @router.message(CommandStart())
     async def on_start(
         message: Message,
@@ -493,6 +615,67 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         await message.answer(
             "Открыть встроенный плеер:",
             reply_markup=start_keyboard(),
+        )
+
+    @router.message(
+        Command("pl", "playlists"),
+        F.chat.type == ChatType.PRIVATE,
+    )
+    async def on_playlists(
+        message: Message,
+        command: CommandObject,
+    ) -> None:
+        if not message.from_user:
+            return
+        uid = message.from_user.id
+        args = (command.args or "").strip()
+        al = args.lower()
+        if al.startswith("new "):
+            name = args[4:].strip()
+            if not name:
+                await message.reply("Использование: /pl new Название плейлиста")
+                return
+            pid, err = await acceptance_store.playlist_create(uid, name)
+            if err:
+                await message.reply(err)
+                return
+            assert pid is not None
+            await message.reply(
+                f"Готово — плейлист «{html.escape(name)}» (#{pid}).\n"
+                f"Найди треки в поиске и жми «➕ В плейлист» после выбора.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        if al == "new":
+            await message.reply("Использование: /pl new Название плейлиста")
+            return
+        if args.isdigit():
+            await _open_playlist_view_message(
+                message, uid, int(args)
+            )
+            return
+        if args:
+            await message.reply(
+                "Команда не распознана. Показать плейлисты: /pl\n"
+                "Создать: /pl new Мой плейлист\n"
+                "Открыть: /pl 3  (по id из списка)"
+            )
+            return
+        rows = await acceptance_store.playlists_list(uid)
+        if not rows:
+            await message.reply(
+                "У тебя ещё нет плейлистов.\n\n"
+                "Создай: /pl new Название\n"
+                "После поиска трека — кнопка «➕ В плейлист»."
+            )
+            return
+        intro = (
+            "Твои плейлисты (нажми на строку, чтобы открыть). "
+            "Или: /pl 5 — плейлист с id 5."
+        )
+        await message.reply(
+            intro,
+            reply_markup=_pl_summaries_keyboard(rows),
         )
 
     @router.message(Command("search"))
@@ -699,7 +882,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             lines = ["Трек"]
         text = (
             "\n".join(lines)
-            + "\n\nОткрой плеер, SoundCloud или скачай MP3 — кнопки ниже."
+            + "\n\nПлеер, SoundCloud, скачать MP3 или добавить в плейлист — кнопки ниже."
         )
         await cq.answer()
         try:
@@ -789,5 +972,152 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             )
         except Exception:
             pass
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_MENU))
+    async def on_pl_menu(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        key = cq.data[len(CALLBACK_PL_MENU):]
+        if not key or not url_cache.get(key):
+            await cq.answer("Список устарел — поищи трек снова.", show_alert=True)
+            return
+        rows = await acceptance_store.playlists_list(cq.from_user.id)
+        if not rows:
+            await cq.answer("Создай плейлист: /pl new Название", show_alert=True)
+            return
+        meta = pick_meta.get(key)
+        if meta:
+            t0, a0 = meta[0], meta[1]
+            head = (
+                f"{html.escape(t0)}\n{html.escape(a0)}\n\nВыбери плейлист:"
+                if a0
+                else f"{html.escape(t0)}\n\nВыбери плейлист:"
+            )
+        else:
+            head = "Выбери плейлист:"
+        pl_rows: list[list[InlineKeyboardButton]] = [
+            [
+                InlineKeyboardButton(
+                    text=f"{_truncate(s.name, PLAYLIST_BUTTON_LABEL)} · {s.track_count}",
+                    callback_data=f"{CALLBACK_PL_ADD}{s.id}:{key}",
+                )
+            ]
+            for s in rows
+        ]
+        try:
+            await cq.message.edit_text(
+                head,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=pl_rows),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            try:
+                await cq.message.answer(
+                    head,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=pl_rows),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+        await cq.answer()
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_ADD))
+    async def on_pl_add(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        rest = cq.data[len(CALLBACK_PL_ADD):]
+        try:
+            pl_s, key = rest.split(":", 1)
+            pl_id = int(pl_s)
+        except (ValueError, IndexError):
+            await cq.answer("Ошибка кнопки", show_alert=True)
+            return
+        url = url_cache.get(key)
+        if not url:
+            await cq.answer("Ссылка устарела, поищи снова.", show_alert=True)
+            return
+        meta = pick_meta.get(key)
+        title, ar = (
+            (meta[0], meta[1]) if meta else ("Без названия", "")
+        )
+        err = await acceptance_store.playlist_add_track(
+            cq.from_user.id, pl_id, url, title, ar
+        )
+        if err:
+            await cq.answer(err, show_alert=True)
+            return
+        pname = await acceptance_store.playlist_name(cq.from_user.id, pl_id) or ""
+        note = f"В «{pname[:50]}»" if pname else "Добавлено"
+        await cq.answer(note, show_alert=True)
+        tail = "Плеер, SoundCloud, скачать или добавить в плейлист — кнопки ниже."
+        if meta and meta[0]:
+            t0, a0 = meta[0], (meta[1] or "").strip()
+            if a0:
+                back = f"{html.escape(t0)}\n{html.escape(a0)}\n\n{tail}"
+            else:
+                back = f"{html.escape(t0)}\n\n{tail}"
+        else:
+            back = tail
+        kb = make_post_pick_keyboard(key)
+        if kb:
+            try:
+                await cq.message.edit_text(
+                    back, reply_markup=kb, parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                pass
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_VIEW))
+    async def on_pl_view(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        raw = cq.data[len(CALLBACK_PL_VIEW):]
+        if not raw.isdigit():
+            await cq.answer()
+            return
+        pl_id = int(raw)
+        await _open_playlist_view_edit(cq, cq.from_user.id, pl_id)
+        await cq.answer()
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_DEL))
+    async def on_pl_del(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        raw = cq.data[len(CALLBACK_PL_DEL):]
+        if not raw.isdigit():
+            await cq.answer()
+            return
+        pl_id = int(raw)
+        if await acceptance_store.playlist_delete(cq.from_user.id, pl_id):
+            try:
+                await cq.message.edit_text("Плейлист удалён.")
+            except Exception:
+                pass
+            await cq.answer()
+        else:
+            await cq.answer("Не найден", show_alert=True)
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_RMT))
+    async def on_pl_remove_track(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        rest = cq.data[len(CALLBACK_PL_RMT):]
+        try:
+            pl_s, tr_s = rest.split(":", 1)
+            pl_id, tr_id = int(pl_s), int(tr_s)
+        except (ValueError, IndexError):
+            await cq.answer()
+            return
+        uid = cq.from_user.id
+        if not await acceptance_store.playlist_remove_track(uid, pl_id, tr_id):
+            await cq.answer("Трек не найден", show_alert=True)
+            return
+        await cq.answer("Убрано из плейлиста")
+        await _open_playlist_view_edit(cq, uid, pl_id)
 
     return router
