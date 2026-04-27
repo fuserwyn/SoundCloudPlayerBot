@@ -69,6 +69,10 @@ CALLBACK_PL_BULK = "pldl:"  # pldl:playlist_id — скачать весь (до
 CALLBACK_TMA_PLAY = "tply:"  # tply:cache_id — очередь в открытый мини-апп
 CALLBACK_TMA_PL = "wpp:"  # wpp:playlist_id:entry_id
 MAX_BUTTON_TEXT = 60
+# InlineKeyboardButton.text: не больше 64 символов (описание Bot API).
+# Для строки трека в плейлисте используем максимум — так левая кнопка в ряде
+# с «✕» визуально шире и видно длиннее название (ширину ряда задаёт клиент).
+MAX_INLINE_BUTTON_TEXT = 64
 PLAYLIST_BUTTON_LABEL = 30
 # За одно нажатие — столько mp3, чтобы не упереться в flood и не зависать часами
 BULK_MP3_MAX = 30
@@ -150,7 +154,7 @@ def _playlist_track_button_label(e, lang: str) -> str:
         s = f"{title} — {ar}"
     else:
         s = title
-    return _truncate(f"▶ {s}", MAX_BUTTON_TEXT)
+    return _truncate(f"▶ {s}", MAX_INLINE_BUTTON_TEXT)
 
 
 def _format_duration(seconds: int) -> str:
@@ -547,11 +551,6 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 ]
             )
         for e in entries:
-            # Слева название (широкая кнопка), справа ✕ — узкая колонка.
-            del_btn = InlineKeyboardButton(
-                text="✕",
-                callback_data=f"{CALLBACK_PL_RMT}{playlist_id}:{e.id}",
-            )
             if webapp_url:
                 pl_lbl = _playlist_track_button_label(e, lang)
                 rrows.append(
@@ -560,7 +559,6 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                             text=pl_lbl,
                             callback_data=f"{CALLBACK_TMA_PL}{playlist_id}:{e.id}",
                         ),
-                        del_btn,
                     ]
                 )
             else:
@@ -570,10 +568,9 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 rrows.append(
                     [
                         InlineKeyboardButton(
-                            text=_truncate(f"🌐 {ext}", MAX_BUTTON_TEXT),
+                            text=_truncate(f"🌐 {ext}", MAX_INLINE_BUTTON_TEXT),
                             url=e.track_url,
                         ),
-                        del_btn,
                     ]
                 )
         rrows.append(
