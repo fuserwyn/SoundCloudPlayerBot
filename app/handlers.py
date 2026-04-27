@@ -568,7 +568,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 )
             one.append(
                 InlineKeyboardButton(
-                    text="🗑",
+                    text="✕",
                     callback_data=f"{CALLBACK_PL_RMT}{playlist_id}:{e.id}",
                 )
             )

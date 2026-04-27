@@ -153,6 +153,18 @@ html.tg-integrated body::before {
   height: 40px;
 }
 
+/* Кнопка «удалить плейлист» в шапке: компактная, не ряд с «Назад». */
+#plDeleteList.ghost-btn--sm {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+}
+
 .ghost-btn__x {
   font-size: 22px;
   line-height: 1;
@@ -1152,14 +1164,21 @@ html.tg-integrated body::before {
 
 .pl-tracks__del {
   flex-shrink: 0;
-  padding: 6px 10px;
-  border-radius: 9px;
-  border: 1px solid rgba(239, 91, 91, 0.45);
-  background: rgba(239, 91, 91, 0.1);
-  color: #f08080;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: 1px solid rgba(239, 91, 91, 0.38);
+  background: rgba(239, 91, 91, 0.08);
+  color: #e06e6e;
   font: inherit;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1;
   cursor: pointer;
   transition: background 0.2s ease, border-color 0.2s ease;
 }
