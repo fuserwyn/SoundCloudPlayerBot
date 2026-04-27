@@ -477,6 +477,10 @@
           addBtn.textContent = "✓ " + pl.name;
           plCache = null;
           void syncPlayerPlaylistRow();
+          void refreshPlList();
+          if (currentPlId === pl.id) {
+            void openPlDetail(pl.id);
+          }
         } else {
           const data = await res.json().catch(() => ({}));
           addBtn.textContent = (data && data.error) || "Ошибка";

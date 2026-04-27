@@ -73,8 +73,9 @@ HELP_TEXT = (
     "артиста (даже если ты написал «пинк флойд камфортабли намб» — поищет «pink floyd "
     "comfortably numb») и поищет ещё раз.\n\n"
     "Скачивание: лимит Telegram на аудио от ботов — 50 МБ.\n"
-    "Перед первым скачиванием бот один раз попросит принять условия "
-    "использования (/terms).\n"
+    "Перед скачиванием напоминаю: у части релизов в чат уходит только превью "
+    "(часто ~30 с), целиком — во встроенном плеере или на SoundCloud "
+    "(см. /terms). Перед первым скачиванием — принять условия (/terms).\n"
     "Mini App плеер: открывается прямо в Telegram, без скачивания. Звук идёт, пока "
     "открыт Mini App; при полном закрытии окна Telegram обычно останавливает "
     "воспроизведение (это ограничение платформы, не «фон» как в Spotify).\n"
@@ -102,7 +103,7 @@ BULK_MP3_DELAY_SEC = 1.0
 SEARCH_LIMIT = 10
 SEARCH_CACHE_SIZE = 2000
 
-TERMS_VERSION = "1.3"
+TERMS_VERSION = "1.4"
 
 TERMS_TEXT = (
     "<b>Условия использования</b> (версия " + TERMS_VERSION + ")\n\n"
@@ -119,7 +120,12 @@ TERMS_TEXT = (
     "а ответственность за правомерность скачивания конкретного трека в твоей "
     "юрисдикции лежит на тебе как на конечном пользователе.\n"
     "4. Соблюдаешь Terms of Service SoundCloud и применимое "
-    "законодательство своей страны.\n\n"
+    "законодательство своей страны.\n"
+    "5. Понимаешь, что по требованию правообладателей у части релизов в Telegram "
+    "нельзя выдать весь трек <b>одним</b> MP3: в чат уходит лишь короткое "
+    "превью (часто около 30 секунд), а <b>полный</b> трек в таких случаях "
+    "доступен для прослушивания во встроенном плеере (Mini App) и на "
+    "SoundCloud — так устроен поток у платформы.\n\n"
     "Бот не хранит скачанные файлы после отправки и не передаёт их третьим лицам. "
     "Факт твоего согласия (Telegram user_id, username, дата и время по Москве) "
     "сохраняется как доказательство принятия этих условий.\n\n"
@@ -128,10 +134,21 @@ TERMS_TEXT = (
 )
 
 TERMS_PROMPT_TEXT = (
-    "Прежде чем что-то скачать, нужно один раз принять условия использования. "
-    "Это короткий текст про то, что ты используешь бота для личного "
-    "прослушивания и сам отвечаешь за легальность скачиваемого. "
+    "Перед скачиванием: у многих треков в чат в виде MP3 уходит не весь трек, "
+    "а превью (часто ~30 с) — из‑за ограничений правообладателей; "
+    "полный трек — во встроенном плеере (Mini App) или на SoundCloud. "
+    "Один раз прими условия — короткое соглашение про личное прослушивание. "
     "Полный текст: /terms"
+)
+
+# Показываем перед каждой рассылкой MP3 (один трек, плейлист, ссылка в чате).
+DOWNLOAD_COPYRIGHT_WARNING = (
+    "⚠️ <b>Перед скачиванием</b>\n"
+    "Целый «официальный» трек в чат <b>одним</b> файлом нередко <b>недоступен</b> "
+    "из\u2011за прав правообладателей: в MP3 попадает разве что короткое "
+    "<b>превью</b> (часто около 30 с).\n"
+    "Полностью <b>послушать</b> можно во <b>встроенном плеере</b> (кнопка "
+    "«Открыть в плеере» / Mini App) или на SoundCloud — поток идёт по правилам сервиса."
 )
 
 
@@ -378,12 +395,16 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             bot_tag = await get_bot_tag(target.bot)
             caption = f"{hbold(track.title)}\n{track.artist}"
             if track.is_preview:
-                caption += (
-                    f"\n\n⚠️ Это превью {track.actual_duration} сек "
-                    f"(полный трек {track.duration // 60}:{track.duration % 60:02d}). "
-                    f"Лейбл закрыл полную версию через SoundCloud Go+. "
-                    f"Поищи неофициальную загрузку — там обычно полный трек."
+                cap_extra = (
+                    f"\n\n⚠️ Это превью ~{track.actual_duration} с "
+                    f"(метаданные: {track.duration // 60}:{track.duration % 60:02d}) — "
+                    f"так настроил правообладатель, полный трек в MP3 в чат не отдать."
                 )
+                if webapp_url:
+                    cap_extra += " Полный трек — кнопка «Открыть в плеере» / на SoundCloud."
+                else:
+                    cap_extra += " Полный трек — на SoundCloud, если открыт поток."
+                caption += cap_extra
             if bot_tag:
                 caption += f"\n\nvia {bot_tag}"
 
@@ -584,25 +605,38 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
     async def _run_pl_bulk(target: Message, user_id: int, pl_id: int) -> None:
         name = await acceptance_store.playlist_name(user_id, pl_id)
         if name is None:
-            await target.answer("Плейлист не найден.")
+            await target.bot.send_message(
+                target.chat.id,
+                "Плейлист не найден.",
+            )
             return
         tracks = await acceptance_store.playlist_get_tracks(user_id, pl_id)
         if tracks is None:
-            await target.answer("Плейлист не найден.")
+            await target.bot.send_message(
+                target.chat.id,
+                "Плейлист не найден.",
+            )
             return
         if not tracks:
-            await target.answer("В плейлисте нет треков.")
+            await target.bot.send_message(
+                target.chat.id,
+                "В плейлисте нет треков.",
+            )
             return
         n = len(tracks)
         if n > BULK_MP3_MAX:
-            await target.answer(
+            await target.bot.send_message(
+                target.chat.id,
                 f"В плейлисте {n} треков. За раз отправляю не больше {BULK_MP3_MAX} mp3 — "
                 f"сократи плейлист в /pl / Mini App и нажми снова, либо качай остаток "
-                f"другой порцией после удаления уже скачанных."
+                f"другой порцией после удаления уже скачанных.",
             )
             return
-        st = await target.answer(
-            f"🎧 «{html.escape(name)}»\n⏳ 0/{n}…",
+        # send_message: после accept сообщение с «Принимаю» может быть удалено
+        st = await target.bot.send_message(
+            target.chat.id,
+            DOWNLOAD_COPYRIGHT_WARNING
+            + f"\n\n🎧 «{html.escape(name)}»\n⏳ 0/{n}…",
             parse_mode=ParseMode.HTML,
         )
         ok = 0
@@ -630,7 +664,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         try:
             await st.edit_text(final, parse_mode=ParseMode.HTML)
         except Exception:
-            await target.answer(final, parse_mode=ParseMode.HTML)
+            await target.bot.send_message(
+                target.chat.id,
+                final,
+                parse_mode=ParseMode.HTML,
+            )
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
@@ -646,7 +684,10 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 return
             if not await _ensure_accepted_or_prompt(message, url):
                 return
-            status = await message.answer("Качаю выбранный трек…")
+            status = await message.answer(
+                DOWNLOAD_COPYRIGHT_WARNING + "\n\nКачаю выбранный трек…",
+                parse_mode=ParseMode.HTML,
+            )
             await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
             await deliver_track(message, status, url)
             return
@@ -771,7 +812,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if url:
             if not await _ensure_accepted_or_prompt(message, url):
                 return
-            status = await message.reply("Качаю трек… это займёт несколько секунд.")
+            status = await message.reply(
+                DOWNLOAD_COPYRIGHT_WARNING
+                + "\n\nКачаю трек… это займёт несколько секунд.",
+                parse_mode=ParseMode.HTML,
+            )
             await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
             await deliver_track(message, status, url)
             return
@@ -991,8 +1036,12 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await _send_acceptance_prompt(cq.message, url)
             return
         await cq.answer("Качаю…")
+        progress = DOWNLOAD_COPYRIGHT_WARNING + "\n\nКачаю трек…"
         try:
-            await cq.message.edit_text("Качаю трек…")
+            await cq.message.edit_text(
+                progress,
+                parse_mode=ParseMode.HTML,
+            )
         except Exception:
             pass
         await cq.message.bot.send_chat_action(
@@ -1041,7 +1090,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                     pass
                 return
             try:
-                await cq.message.edit_text("Согласие принято. Качаю плейлист…")
+                await cq.message.delete()
             except Exception:
                 pass
             await _run_pl_bulk(cq.message, cq.from_user.id, pl_id)
@@ -1058,7 +1107,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             return
 
         try:
-            await cq.message.edit_text("Согласие принято. Качаю выбранный трек…")
+            await cq.message.edit_text(
+                DOWNLOAD_COPYRIGHT_WARNING
+                + "\n\nСогласие принято. Качаю выбранный трек…",
+                parse_mode=ParseMode.HTML,
+            )
         except Exception:
             pass
         await cq.message.bot.send_chat_action(
