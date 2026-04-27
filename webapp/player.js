@@ -182,6 +182,18 @@
     });
   }
 
+  function showAppAlert(message) {
+    if (tg && typeof tg.showAlert === "function") {
+      try {
+        tg.showAlert(message);
+        return;
+      } catch (e) {
+        /* */
+      }
+    }
+    window.alert(message);
+  }
+
   let I18N = null;
 
   function t(key) {
@@ -824,26 +836,50 @@
   }
 
   async function openPlDetail(id, options) {
-    if (playlistQueue && playlistQueue.plId !== id) {
+    const pid = Number(id);
+    if (!Number.isFinite(pid) || pid < 1) {
+      showAppAlert(t("webapp_pl_open_detail_fail"));
+      return;
+    }
+
+    if (playlistQueue && playlistQueue.plId !== pid) {
       playlistQueue = null;
       updatePlaylistNavLabels();
     }
 
-    const res = await apiGet(`/api/playlists/${id}`);
-    if (!res.ok) return;
-    const data = await res.json();
+    let res;
+    try {
+      res = await apiGet(`/api/playlists/${pid}`);
+    } catch (e) {
+      showAppAlert(t("webapp_network_fail"));
+      return;
+    }
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      const msg =
+        (errBody && errBody.error) || t("webapp_pl_open_detail_fail");
+      showAppAlert(msg);
+      return;
+    }
+    let data;
+    try {
+      data = await res.json();
+    } catch (e) {
+      showAppAlert(t("webapp_pl_open_detail_fail"));
+      return;
+    }
     currentPlId = data.id;
     plDetailTitle.textContent = data.name;
     const tracks = data.tracks || [];
-    const urls = tracks.map((t) => t.url);
+    const urls = tracks.map((row) => row.url);
 
-    if (playlistQueue && playlistQueue.plId === id) {
+    if (playlistQueue && playlistQueue.plId === pid) {
       const cur = playlistQueue.urls[playlistQueue.index];
       const ni = cur != null ? urls.indexOf(cur) : -1;
       if (ni >= 0) {
-        playlistQueue = { plId: id, urls, index: ni };
+        playlistQueue = { plId: pid, urls, index: ni };
       } else if (urls.length) {
-        playlistQueue = { plId: id, urls, index: 0 };
+        playlistQueue = { plId: pid, urls, index: 0 };
       } else {
         playlistQueue = null;
         updatePlaylistNavLabels();
@@ -851,16 +887,16 @@
     }
 
     plTracks.innerHTML = "";
-    tracks.forEach((t, idx) => {
+    tracks.forEach((tr, idx) => {
       const li = document.createElement("li");
       li.className = "pl-tracks__row";
-      li.dataset.trackId = String(t.id);
-      const lab = (t.title || "—") + (t.artist ? " — " + t.artist : "");
+      li.dataset.trackId = String(tr.id);
+      const lab = (tr.title || "—") + (tr.artist ? " — " + tr.artist : "");
 
       const playFromRow = () => {
-        const ok = loadTrack(t.url, {
-          playlist: { plId: id, urls, index: idx },
-          thumbnail: t.thumbnail || undefined,
+        const ok = loadTrack(tr.url, {
+          playlist: { plId: pid, urls, index: idx },
+          thumbnail: tr.thumbnail || undefined,
         });
         if (!ok) return;
         highlightPlRow(idx);
@@ -877,7 +913,7 @@
       thumb.type = "button";
       thumb.className = "pl-tracks__thumb";
       thumb.setAttribute("aria-label", t("webapp_aria_play_cover") + lab);
-      const tu = thumbStyleUrl(t.thumbnail);
+      const tu = thumbStyleUrl(tr.thumbnail);
       if (tu) {
         thumb.style.backgroundImage = `url("${tu.replace(/"/g, '\\"')}")`;
       }
@@ -902,10 +938,10 @@
       textBtn.setAttribute("aria-label", t("webapp_aria_row_play") + lab);
       const tTitle = document.createElement("div");
       tTitle.className = "pl-tracks__title";
-      tTitle.textContent = t.title || "—";
+      tTitle.textContent = tr.title || "—";
       const tArt = document.createElement("div");
       tArt.className = "pl-tracks__artist";
-      tArt.textContent = t.artist || "";
+      tArt.textContent = tr.artist || "";
       textBtn.appendChild(tTitle);
       textBtn.appendChild(tArt);
       textBtn.addEventListener("click", playFromRow);
@@ -926,11 +962,11 @@
       down.disabled = idx === tracks.length - 1;
       up.addEventListener("click", (e) => {
         e.stopPropagation();
-        void moveTrackInPlaylist(id, idx, -1);
+        void moveTrackInPlaylist(pid, idx, -1);
       });
       down.addEventListener("click", (e) => {
         e.stopPropagation();
-        void moveTrackInPlaylist(id, idx, 1);
+        void moveTrackInPlaylist(pid, idx, 1);
       });
       moves.appendChild(up);
       moves.appendChild(down);
@@ -942,8 +978,8 @@
       delB.textContent = "✕";
       delB.addEventListener("click", async (e) => {
         e.stopPropagation();
-        const d = await apiJson("DELETE", `/api/playlists/${id}/tracks/${t.id}`);
-        if (d.ok) void openPlDetail(id);
+        const d = await apiJson("DELETE", `/api/playlists/${pid}/tracks/${tr.id}`);
+        if (d.ok) void openPlDetail(pid);
       });
       li.appendChild(thumb);
       li.appendChild(playIco);
@@ -953,7 +989,7 @@
       plTracks.appendChild(li);
     });
 
-    if (playlistQueue && playlistQueue.plId === id) {
+    if (playlistQueue && playlistQueue.plId === pid) {
       highlightPlRow(playlistQueue.index);
     } else {
       highlightPlRow(-1);
@@ -973,7 +1009,7 @@
       );
       const t0 = tracks[idx];
       const ok = loadTrack(t0.url, {
-        playlist: { plId: id, urls, index: idx },
+        playlist: { plId: pid, urls, index: idx },
         thumbnail: t0.thumbnail || undefined,
       });
       if (ok) {

@@ -211,6 +211,7 @@ _STR: dict[str, dict[str, str]] = {
             "и общая с ботом база (DATABASE_URL)."
         ),
         webapp_pl_load_list_fail="Не удалось загрузить",
+        webapp_pl_open_detail_fail="Не удалось открыть плейлист. Попробуй ещё раз.",
         webapp_pl_n_tr="тр.",
         webapp_in_all_pl="Трек уже во всех плейлистах",
         webapp_reorder_fail="Не удалось изменить порядок",
@@ -419,6 +420,7 @@ _STR: dict[str, dict[str, str]] = {
             "bot token (TELEGRAM_API_KEY / BOT_TOKEN) and the same database (DATABASE_URL) as the bot."
         ),
         webapp_pl_load_list_fail="Failed to load",
+        webapp_pl_open_detail_fail="Could not open the playlist. Try again.",
         webapp_pl_n_tr="tr",
         webapp_in_all_pl="Track is already in every playlist",
         webapp_reorder_fail="Could not change order",

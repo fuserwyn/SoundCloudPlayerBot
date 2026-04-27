@@ -926,6 +926,9 @@ html.tg-integrated body::before {
 }
 
 .pl-list__item {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  user-select: none;
   display: flex;
   justify-content: space-between;
   align-items: center;
