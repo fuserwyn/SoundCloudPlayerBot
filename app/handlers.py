@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import html
 import logging
 import uuid
 from collections import OrderedDict
@@ -7,8 +9,8 @@ from urllib.parse import quote
 
 from aiogram import F, Router
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
-from aiogram.enums import ChatAction, ChatType
-from aiogram.filters import Command, CommandStart
+from aiogram.enums import ChatAction, ChatType, ParseMode
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -24,7 +26,7 @@ from aiogram.types import (
 from aiogram.utils.markdown import hbold
 
 from app.config import Settings
-from app.db import AcceptanceStore
+from app.db import AcceptanceStore, PlaylistSummary
 from app.llm import LLMClient, LLMUnavailable
 from app.soundcloud import (
     SearchResult,
@@ -46,14 +48,15 @@ WELCOME_TEXT = (
     "плеере, на SoundCloud или скачать MP3. Если не нашлось, AI попробует угадать "
     "артиста (опечатки, фонетика — например «пинк флойд камфортабли намб») и поищет "
     "ещё раз.\n"
-    "3) Открой Mini App — в нём плеер, поиск и <b>свои плейлисты</b> (вкладка внутри "
-    "приложения).\n"
+    "3) Открой Mini App — плеер и плейлисты; те же плейлисты доступны в чате: "
+    "/pl — смотри, создавай, клади треки из поиска (кнопка «➕ В плейлист»).\n"
     "4) В любом чате через @бот можно быстро найти трек и отправить ссылку — "
     "там только прослушивание в плеере или на SoundCloud; mp3 — только в этом чате "
     "после /terms.\n\n"
     "Команды:\n"
     "/start — это сообщение\n"
     "/player — открыть плеер\n"
+    "/pl — плейлисты (как в Mini App)\n"
     "/terms — условия использования\n"
     "/help — помощь"
 )
@@ -76,14 +79,25 @@ HELP_TEXT = (
     "воспроизведение (это ограничение платформы, не «фон» как в Spotify).\n"
     "Inline (@бот в любом чате): только ссылка и кнопки «в плеере» / на SoundCloud — "
     "без отправки mp3 оттуда.\n\n"
-    "Плейлисты — во вкладке «Плейлисты» в Mini App (кнопка /player)."
+    "Плейлисты: /pl (в чате) — те же, что в Mini App. Из поиска — «➕ В плейлист»; в "
+    "открытом плейлисте — «Скачать всё (mp3)» (после /terms, до 30 треков за раз)."
 )
 
 CALLBACK_PICK_PREFIX = "pick:"
 CALLBACK_DOWNLOAD_PREFIX = "dld:"  # скачать MP3 после выбора в списке поиска
 CALLBACK_ACCEPT_PREFIX = "accept:"
 CALLBACK_DECLINE = "decline"
+CALLBACK_PL_MENU = "plm:"
+CALLBACK_PL_ADD = "padd:"
+CALLBACK_PL_VIEW = "pvv:"
+CALLBACK_PL_DEL = "pdl:"
+CALLBACK_PL_RMT = "rmt:"
+CALLBACK_PL_BULK = "pldl:"  # pldl:playlist_id — скачать весь (до лимита)
 MAX_BUTTON_TEXT = 60
+PLAYLIST_BUTTON_LABEL = 30
+# За одно нажатие — столько mp3, чтобы не упереться в flood и не зависать часами
+BULK_MP3_MAX = 30
+BULK_MP3_DELAY_SEC = 1.0
 SEARCH_LIMIT = 10
 SEARCH_CACHE_SIZE = 2000
 
@@ -292,8 +306,10 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             )
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    def make_post_pick_keyboard(cache_key: str) -> InlineKeyboardMarkup | None:
-        """Плеер, SoundCloud, скачивание — после нажатия на строку в поиске."""
+    def make_post_pick_keyboard(
+        cache_key: str, *, show_playlist: bool = True
+    ) -> InlineKeyboardMarkup | None:
+        """Плеер, SoundCloud, скачивание — после нажатия на строке в поиске."""
         track_url = url_cache.get(cache_key)
         if not track_url:
             return None
@@ -311,14 +327,22 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 )
             ]
         )
+        if show_playlist:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="➕ В плейлист",
+                        callback_data=f"{CALLBACK_PL_MENU}{cache_key}",
+                    )
+                ]
+            )
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    async def deliver_track(
-        chat_message: Message,
-        status: Message,
+    async def _send_mp3_to_chat(
+        target: Message,
         url: str,
-    ) -> None:
-        """Скачать трек SoundCloud и отправить mp3."""
+    ) -> str | None:
+        """Скачать трек и отправить mp3. None = ОК, иначе короткое сообщение об ошибке."""
         try:
             track: Track = await download_track(
                 url=url,
@@ -326,29 +350,22 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 max_bytes=settings.max_upload_bytes,
             )
         except TrackTooLargeError as exc:
-            logger.info("Track too large for %s: %s", url, exc)
             text = (
-                f"Трек весит {exc.size_bytes / 1024 / 1024:.1f} МБ — это больше "
-                f"лимита Telegram (50 МБ). Не отправлю."
+                f"Трек весит {exc.size_bytes / 1024 / 1024:.1f} МБ — больше лимита "
+                f"Telegram (50 МБ). Пропускаю."
             )
             if webapp_url:
-                text += "\n\nНо его можно послушать прямо в плеере 👇"
-            await status.edit_text(text, reply_markup=make_track_keyboard(url))
-            return
+                text += " В плеере Mini App послушать можно."
+            return text
         except SoundCloudError:
             logger.warning("Failed to download %s", url)
-            await status.edit_text(
-                "Не получилось скачать трек. Проверь, что ссылка ведёт на публичный "
-                "трек SoundCloud, и попробуй ещё раз."
-            )
-            return
+            return "Не скачал с SoundCloud, пропускаю."
         except Exception:
             logger.exception("Unexpected error while handling %s", url)
-            await status.edit_text("Что-то пошло не так на моей стороне. Попробуй позже.")
-            return
+            return "Ошибка на сервере, пропускаю."
 
         try:
-            bot_tag = await get_bot_tag(chat_message.bot)
+            bot_tag = await get_bot_tag(target.bot)
             caption = f"{hbold(track.title)}\n{track.artist}"
             if track.is_preview:
                 caption += (
@@ -360,11 +377,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             if bot_tag:
                 caption += f"\n\nvia {bot_tag}"
 
-            await chat_message.bot.send_chat_action(
-                chat_message.chat.id, ChatAction.UPLOAD_VOICE
+            await target.bot.send_chat_action(
+                target.chat.id, ChatAction.UPLOAD_VOICE
             )
             tag_id3(track.file_path, bot_tag)
-            await chat_message.answer_audio(
+            await target.answer_audio(
                 audio=FSInputFile(track.file_path, filename=f"{track.title}.mp3"),
                 caption=caption,
                 title=track.title,
@@ -372,15 +389,32 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 duration=track.actual_duration or track.duration or None,
                 reply_markup=make_track_keyboard(track.webpage_url),
             )
-            try:
-                await status.delete()
-            except Exception:
-                pass
         except Exception:
             logger.exception("Failed to send audio for %s", url)
-            await status.edit_text("Скачал, но не получилось отправить файл. Попробуй ещё раз.")
+            return "Не получилось отправить файл в Telegram."
         finally:
             track.cleanup()
+        return None
+
+    async def deliver_track(
+        chat_message: Message,
+        status: Message,
+        url: str,
+    ) -> None:
+        """Скачать трек SoundCloud и отправить mp3."""
+        err = await _send_mp3_to_chat(chat_message, url)
+        if err:
+            km = (
+                make_track_keyboard(url)
+                if (webapp_url and "50 МБ" in err)
+                else None
+            )
+            await status.edit_text(err, reply_markup=km)
+            return
+        try:
+            await status.delete()
+        except Exception:
+            pass
 
     def _acceptance_keyboard(key: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
@@ -421,6 +455,172 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             return True
         await _send_acceptance_prompt(message, url)
         return False
+
+    async def _send_pl_bulk_terms_prompt(target_message: Message, pl_id: int) -> None:
+        pkey = pending_cache.put(f"plbulk:{pl_id}")
+        await target_message.answer(
+            TERMS_PROMPT_TEXT,
+            reply_markup=_acceptance_keyboard(pkey),
+            disable_web_page_preview=True,
+        )
+
+    def _format_playlist_message(pl_name: str, entries) -> str:
+        head = f"🎧 {html.escape(pl_name)}"
+        if not entries:
+            return head + "\n\nПлейлист пуст. Добавь треки из поиска (➕ В плейлист) или в Mini App."
+        lines: list[str] = [head, ""]
+        for i, e in enumerate(entries, start=1):
+            t = f"{e.title} — {e.artist}" if (e.artist or "").strip() else e.title
+            lines.append(f"{i}. {html.escape(t)}")
+        return "\n".join(lines)
+
+    def _pl_summaries_keyboard(rows: list[PlaylistSummary]) -> InlineKeyboardMarkup:
+        kb: list[list[InlineKeyboardButton]] = []
+        for s in rows:
+            label = f"{_truncate(s.name, PLAYLIST_BUTTON_LABEL)} · {s.track_count}"
+            kb.append(
+                [
+                    InlineKeyboardButton(
+                        text=label,
+                        callback_data=f"{CALLBACK_PL_VIEW}{s.id}",
+                    )
+                ]
+            )
+        return InlineKeyboardMarkup(inline_keyboard=kb)
+
+    def _playlist_tracks_keyboard(playlist_id: int, entries) -> InlineKeyboardMarkup:
+        rrows: list[list[InlineKeyboardButton]] = []
+        for i, e in enumerate(entries, start=1):
+            one: list[InlineKeyboardButton] = []
+            if webapp_url:
+                one.append(_player_button(webapp_url, e.track_url, f"▶ {i}"))
+            else:
+                one.append(InlineKeyboardButton(text=f"🌐 {i}", url=e.track_url))
+            one.append(
+                InlineKeyboardButton(
+                    text="🗑",
+                    callback_data=f"{CALLBACK_PL_RMT}{playlist_id}:{e.id}",
+                )
+            )
+            rrows.append(one)
+        rrows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"⬇ Скачать все mp3 (≤{BULK_MP3_MAX})",
+                    callback_data=f"{CALLBACK_PL_BULK}{playlist_id}",
+                )
+            ]
+        )
+        rrows.append(
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить плейлист",
+                    callback_data=f"{CALLBACK_PL_DEL}{playlist_id}",
+                )
+            ]
+        )
+        return InlineKeyboardMarkup(inline_keyboard=rrows)
+
+    async def _open_playlist_view_message(
+        message: Message, user_id: int, pl_id: int
+    ) -> bool:
+        pl_name = await acceptance_store.playlist_name(user_id, pl_id)
+        if pl_name is None:
+            await message.reply("Плейлист не найден. /pl")
+            return False
+        tr = await acceptance_store.playlist_get_tracks(user_id, pl_id)
+        if tr is None:
+            await message.reply("Плейлист не найден. /pl")
+            return False
+        text = _format_playlist_message(pl_name, tr)
+        await message.reply(
+            text,
+            reply_markup=_playlist_tracks_keyboard(pl_id, tr),
+            parse_mode=ParseMode.HTML,
+        )
+        return True
+
+    async def _open_playlist_view_edit(cq: CallbackQuery, user_id: int, pl_id: int) -> None:
+        if not cq.message:
+            return
+        pl_name = await acceptance_store.playlist_name(user_id, pl_id)
+        if pl_name is None:
+            try:
+                await cq.message.edit_text("Плейлист не найден.")
+            except Exception:
+                pass
+            return
+        tr = await acceptance_store.playlist_get_tracks(user_id, pl_id)
+        if tr is None:
+            try:
+                await cq.message.edit_text("Плейлист не найден.")
+            except Exception:
+                pass
+            return
+        text = _format_playlist_message(pl_name, tr)
+        kb = _playlist_tracks_keyboard(pl_id, tr)
+        try:
+            await cq.message.edit_text(
+                text, reply_markup=kb, parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            try:
+                await cq.message.answer(
+                    text, reply_markup=kb, parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                pass
+
+    async def _run_pl_bulk(target: Message, user_id: int, pl_id: int) -> None:
+        name = await acceptance_store.playlist_name(user_id, pl_id)
+        if name is None:
+            await target.answer("Плейлист не найден.")
+            return
+        tracks = await acceptance_store.playlist_get_tracks(user_id, pl_id)
+        if tracks is None:
+            await target.answer("Плейлист не найден.")
+            return
+        if not tracks:
+            await target.answer("В плейлисте нет треков.")
+            return
+        n = len(tracks)
+        if n > BULK_MP3_MAX:
+            await target.answer(
+                f"В плейлисте {n} треков. За раз отправляю не больше {BULK_MP3_MAX} mp3 — "
+                f"сократи плейлист в /pl / Mini App и нажми снова, либо качай остаток "
+                f"другой порцией после удаления уже скачанных."
+            )
+            return
+        st = await target.answer(
+            f"🎧 «{html.escape(name)}»\n⏳ 0/{n}…",
+            parse_mode=ParseMode.HTML,
+        )
+        ok = 0
+        err = 0
+        for i, t in enumerate(tracks, start=1):
+            try:
+                await st.edit_text(
+                    f"🎧 «{html.escape(name)}»\n⏳ {i}/{n}…",
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+            emsg = await _send_mp3_to_chat(target, t.track_url)
+            if emsg is None:
+                ok += 1
+            else:
+                err += 1
+            if i < n:
+                await asyncio.sleep(BULK_MP3_DELAY_SEC)
+        final = (
+            f"🎧 «{html.escape(name)}»\n"
+            f"Готово: {ok} файлов, с ошибками/пропусков: {err} (лимит 50 МБ, "
+            f"SoundCloud, сеть)."
+        )
+        try:
+            await st.edit_text(final, parse_mode=ParseMode.HTML)
+        except Exception:
+            await target.answer(final, parse_mode=ParseMode.HTML)
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
@@ -475,6 +675,55 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         await message.answer(
             "Открыть встроенный плеер:",
             reply_markup=start_keyboard(),
+        )
+
+    @router.message(
+        Command("pl", "playlists"),
+        F.chat.type == ChatType.PRIVATE,
+    )
+    async def on_playlists(message: Message, command: CommandObject) -> None:
+        if not message.from_user:
+            return
+        uid = message.from_user.id
+        args = (command.args or "").strip()
+        al = args.lower()
+        if al.startswith("new "):
+            name = args[4:].strip()
+            if not name:
+                await message.reply("Использование: /pl new Название")
+                return
+            pid, err = await acceptance_store.playlist_create(uid, name)
+            if err:
+                await message.reply(err)
+                return
+            assert pid is not None
+            await message.reply(
+                f"Плейлист «{html.escape(name)}» готов. Те же плейлисты в Mini App. "
+                f"Клади треки кнопкой «➕ В плейлист» после поиска.",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        if al == "new":
+            await message.reply("Использование: /pl new Название")
+            return
+        if args.isdigit():
+            await _open_playlist_view_message(message, uid, int(args))
+            return
+        if args:
+            await message.reply(
+                "Непонятно. /pl — список, /pl new Имя, /pl 3 — открыть id 3"
+            )
+            return
+        rows = await acceptance_store.playlists_list(uid)
+        if not rows:
+            await message.reply(
+                "Плейлистов пока нет. Создай: /pl new Мои треки\n"
+                "То же в Mini App → вкладка «Плейлисты»."
+            )
+            return
+        await message.reply(
+            "Твои плейлисты (синхрон с Mini App). Нажми на строку или /pl 5 по id.",
+            reply_markup=_pl_summaries_keyboard(rows),
         )
 
     @router.message(Command("search"))
@@ -666,7 +915,8 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not url:
             await cq.answer("Список устарел, поищи заново.", show_alert=True)
             return
-        pick_kb = make_post_pick_keyboard(key)
+        show_pl = cq.message.chat.type == ChatType.PRIVATE
+        pick_kb = make_post_pick_keyboard(key, show_playlist=show_pl)
         if not pick_kb:
             await cq.answer("Список устарел, поищи заново.", show_alert=True)
             return
@@ -679,9 +929,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 lines.append(artist)
         else:
             lines = ["Трек"]
+        pl_hint = " Или ➕ в плейлист — кнопка ниже." if show_pl else ""
         text = (
             "\n".join(lines)
-            + "\n\nОткрой плеер, SoundCloud или скачай MP3 — кнопки ниже."
+            + "\n\nПлеер, SoundCloud, скачать MP3."
+            + pl_hint
         )
         await cq.answer()
         try:
@@ -731,7 +983,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await cq.message.answer(TERMS_TEXT, disable_web_page_preview=True)
             return
 
-        url = pending_cache.get(payload)
+        raw = pending_cache.get(payload)
         await acceptance_store.record(
             user_id=cq.from_user.id,
             username=cq.from_user.username,
@@ -739,11 +991,37 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         )
         await cq.answer("Спасибо! Согласие сохранено.")
 
-        if not url:
+        if not raw:
             try:
                 await cq.message.edit_text(
                     "Согласие принято. Заявка на скачивание устарела — пришли "
                     "ссылку или название трека ещё раз."
+                )
+            except Exception:
+                pass
+            return
+
+        if isinstance(raw, str) and raw.startswith("plbulk:"):
+            try:
+                pl_id = int(raw.split(":", 1)[1])
+            except (ValueError, IndexError):
+                try:
+                    await cq.message.edit_text("Согласие сохранено, но заявка сбой.")
+                except Exception:
+                    pass
+                return
+            try:
+                await cq.message.edit_text("Согласие принято. Качаю плейлист…")
+            except Exception:
+                pass
+            await _run_pl_bulk(cq.message, cq.from_user.id, pl_id)
+            return
+
+        url = raw
+        if not str(url).startswith("http"):
+            try:
+                await cq.message.edit_text(
+                    "Согласие принято, но ссылка устарела — пришли снова."
                 )
             except Exception:
                 pass
@@ -771,5 +1049,174 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             )
         except Exception:
             pass
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_MENU))
+    async def on_pl_menu(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        if cq.message.chat.type != ChatType.PRIVATE:
+            await cq.answer("Плейлисты только в личке с ботом.", show_alert=True)
+            return
+        key = cq.data[len(CALLBACK_PL_MENU):]
+        if not key or not url_cache.get(key):
+            await cq.answer("Список устарел — поищи снова.", show_alert=True)
+            return
+        rows = await acceptance_store.playlists_list(cq.from_user.id)
+        if not rows:
+            await cq.answer("Создай: /pl new Название", show_alert=True)
+            return
+        meta = pick_meta.get(key)
+        if meta:
+            t0, a0 = meta[0], meta[1]
+            if a0:
+                head = f"{html.escape(t0)}\n{html.escape(a0)}\n\nКуда добавить?"
+            else:
+                head = f"{html.escape(t0)}\n\nКуда добавить?"
+        else:
+            head = "Куда добавить трек?"
+        pl_rows: list[list[InlineKeyboardButton]] = [
+            [
+                InlineKeyboardButton(
+                    text=f"{_truncate(s.name, PLAYLIST_BUTTON_LABEL)} · {s.track_count}",
+                    callback_data=f"{CALLBACK_PL_ADD}{s.id}:{key}",
+                )
+            ]
+            for s in rows
+        ]
+        try:
+            await cq.message.edit_text(
+                head,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=pl_rows),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            try:
+                await cq.message.answer(
+                    head,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=pl_rows),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                pass
+        await cq.answer()
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_ADD))
+    async def on_pl_add(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        rest = cq.data[len(CALLBACK_PL_ADD):]
+        try:
+            pl_s, key = rest.split(":", 1)
+            pl_id = int(pl_s)
+        except (ValueError, IndexError):
+            await cq.answer("Ошибка", show_alert=True)
+            return
+        url = url_cache.get(key)
+        if not url:
+            await cq.answer("Ссылка устарела.", show_alert=True)
+            return
+        meta = pick_meta.get(key)
+        title, ar = (meta[0], meta[1]) if meta else ("Без названия", "")
+        err = await acceptance_store.playlist_add_track(
+            cq.from_user.id, pl_id, url, title, ar
+        )
+        if err:
+            await cq.answer(err, show_alert=True)
+            return
+        pname = await acceptance_store.playlist_name(cq.from_user.id, pl_id) or ""
+        await cq.answer(f"Добавлено в «{pname[:40]}»" if pname else "Ок", show_alert=True)
+        tail = "Плеер, MP3, плейлист — снова кнопки ниже."
+        if meta and meta[0]:
+            t0, a0 = meta[0], (meta[1] or "").strip()
+            if a0:
+                back = f"{html.escape(t0)}\n{html.escape(a0)}\n\n{tail}"
+            else:
+                back = f"{html.escape(t0)}\n\n{tail}"
+        else:
+            back = tail
+        kb = make_post_pick_keyboard(
+            key, show_playlist=cq.message.chat.type == ChatType.PRIVATE
+        )
+        if kb:
+            try:
+                await cq.message.edit_text(
+                    back, reply_markup=kb, parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                pass
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_VIEW))
+    async def on_pl_view(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        raw = cq.data[len(CALLBACK_PL_VIEW):]
+        if not raw.isdigit():
+            await cq.answer()
+            return
+        await _open_playlist_view_edit(cq, cq.from_user.id, int(raw))
+        await cq.answer()
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_DEL))
+    async def on_pl_del(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        raw = cq.data[len(CALLBACK_PL_DEL):]
+        if not raw.isdigit():
+            await cq.answer()
+            return
+        pl_id = int(raw)
+        if await acceptance_store.playlist_delete(cq.from_user.id, pl_id):
+            try:
+                await cq.message.edit_text("Плейлист удалён (и в Mini App пропадёт).")
+            except Exception:
+                pass
+            await cq.answer()
+        else:
+            await cq.answer("Не найден", show_alert=True)
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_RMT))
+    async def on_pl_remove_track(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        rest = cq.data[len(CALLBACK_PL_RMT):]
+        try:
+            pl_s, tr_s = rest.split(":", 1)
+            pl_id, tr_id = int(pl_s), int(tr_s)
+        except (ValueError, IndexError):
+            await cq.answer()
+            return
+        uid = cq.from_user.id
+        if not await acceptance_store.playlist_remove_track(uid, pl_id, tr_id):
+            await cq.answer("Не найден", show_alert=True)
+            return
+        await cq.answer("Убрано")
+        await _open_playlist_view_edit(cq, uid, pl_id)
+
+    @router.callback_query(F.data.startswith(CALLBACK_PL_BULK))
+    async def on_pl_bulk_download(cq: CallbackQuery) -> None:
+        if not cq.data or not cq.from_user or not cq.message:
+            await cq.answer()
+            return
+        raw = cq.data[len(CALLBACK_PL_BULK):]
+        if not raw.isdigit():
+            await cq.answer()
+            return
+        pl_id = int(raw)
+        uid = cq.from_user.id
+        if not await acceptance_store.has_accepted(uid, TERMS_VERSION):
+            await cq.answer()
+            await _send_pl_bulk_terms_prompt(cq.message, pl_id)
+            return
+        await cq.answer("Начинаю рассылку mp3…")
+        try:
+            await cq.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        await _run_pl_bulk(cq.message, uid, pl_id)
 
     return router
