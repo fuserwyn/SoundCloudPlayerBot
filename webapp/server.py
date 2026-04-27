@@ -355,20 +355,25 @@ async def handle_tma_poll(request: web.Request) -> web.Response:
         since = 0
     store: AcceptanceStore = request.app["store"]
     d = await store.tma_play_poll(uid, since)
+    play: dict[str, Any] | None = None
+    if d["has_update"]:
+        play = {
+            "url": d["track_url"],
+            "playlist_id": d["playlist_id"],
+            "track_index": d["track_index"],
+            "thumbnail": d["thumbnail"],
+        }
+        # Полный порядок как в /api/playlists и в сообщении бота (sort_order).
+        pid = d.get("playlist_id")
+        if pid is not None:
+            trs = await store.playlist_get_tracks(uid, int(pid))
+            if trs is not None:
+                play["track_urls"] = [t.track_url for t in trs]
     return web.json_response(
         {
             "v": d["v"],
             "has_update": d["has_update"],
-            "play": (
-                {
-                    "url": d["track_url"],
-                    "playlist_id": d["playlist_id"],
-                    "track_index": d["track_index"],
-                    "thumbnail": d["thumbnail"],
-                }
-                if d["has_update"]
-                else None
-            ),
+            "play": play,
         },
         dumps=lambda o: json.dumps(o, ensure_ascii=False),
     )

@@ -1169,6 +1169,24 @@
     const plId = play.playlist_id;
     const idx0 = play.track_index != null ? +play.track_index : 0;
     const th = play.thumbnail || null;
+    const fromPoll =
+      plId != null &&
+      plId !== "" &&
+      Array.isArray(play.track_urls) &&
+      play.track_urls.length > 0;
+    if (fromPoll) {
+      const urls = play.track_urls;
+      const idx = Math.min(Math.max(0, idx0), urls.length - 1);
+      showPlTab();
+      loadTrack(urls[idx], {
+        playlist: { plId: +plId, urls, index: idx },
+        thumbnail: th || undefined,
+        compact: startCompact
+      });
+      showPlayerView();
+      void openPlDetail(+plId);
+      return;
+    }
     if (plId != null && plId !== "") {
       const r = await apiGet("/api/playlists/" + plId);
       if (r.ok) {
