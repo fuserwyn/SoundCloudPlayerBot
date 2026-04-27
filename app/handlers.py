@@ -125,12 +125,30 @@ class _PickMetaCache:
         return t
 
 
-def _player_button(webapp_url: str, track_url: str | None, label: str) -> InlineKeyboardButton:
+def _player_button(
+    webapp_url: str,
+    track_url: str | None,
+    label: str,
+    *,
+    compact: bool = False,
+) -> InlineKeyboardButton:
     if track_url:
-        url = f"{webapp_url}/?track={quote(track_url, safe='')}"
+        u = f"{webapp_url}/?track={quote(track_url, safe='')}"
+        if compact:
+            u += "&compact=1"
     else:
-        url = f"{webapp_url}/"
-    return InlineKeyboardButton(text=label, web_app=WebAppInfo(url=url))
+        u = f"{webapp_url}/"
+    return InlineKeyboardButton(text=label, web_app=WebAppInfo(url=u))
+
+
+def _playlist_track_button_label(e, lang: str) -> str:
+    title = (e.title or i18n.t(lang, "no_title")).strip() or "—"
+    ar = (e.artist or "").strip()
+    if ar:
+        s = f"{title} — {ar}"
+    else:
+        s = title
+    return _truncate(f"▶ {s}", MAX_BUTTON_TEXT)
 
 
 def _format_duration(seconds: int) -> str:
@@ -532,12 +550,25 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                     )
                 ]
             )
-        for i, e in enumerate(entries, start=1):
+        for e in entries:
             one: list[InlineKeyboardButton] = []
             if webapp_url:
-                one.append(_player_button(webapp_url, e.track_url, f"▶ {i}"))
+                pl_lbl = _playlist_track_button_label(e, lang)
+                one.append(
+                    _player_button(
+                        webapp_url, e.track_url, pl_lbl, compact=True
+                    )
+                )
             else:
-                one.append(InlineKeyboardButton(text=f"🌐 {i}", url=e.track_url))
+                title = (e.title or i18n.t(lang, "no_title")).strip() or "—"
+                ar = (e.artist or "").strip()
+                ext = f"{title} — {ar}" if ar else title
+                one.append(
+                    InlineKeyboardButton(
+                        text=_truncate(f"🌐 {ext}", MAX_BUTTON_TEXT),
+                        url=e.track_url,
+                    )
+                )
             one.append(
                 InlineKeyboardButton(
                     text="🗑",

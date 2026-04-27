@@ -1168,3 +1168,71 @@ html.tg-integrated body::before {
   background: rgba(239, 91, 91, 0.18);
   border-color: rgba(239, 91, 91, 0.6);
 }
+
+/* Режим «в фоне» (кнопка трека в чате + ?compact=1): без expand, мини-плеер */
+html.app--compact .tabs,
+html.app--compact #panelSearch,
+html.app--compact #panelPl,
+html.app--compact .hint {
+  display: none !important;
+}
+
+html.app--compact .app {
+  justify-content: flex-end;
+  gap: 0;
+  padding-top: 8px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+}
+
+html.app--compact .app__header {
+  border-bottom: 1px solid var(--border);
+  padding: 2px 0 8px;
+  margin-bottom: 0;
+}
+
+html.app--compact .brand__text {
+  display: none;
+}
+
+html.app--compact .brand {
+  min-height: 0;
+}
+
+html.app--compact .brand__logo {
+  width: 32px;
+  height: 18px;
+  opacity: 0.9;
+}
+
+html.app--compact .player {
+  gap: 8px;
+}
+
+html.app--compact .player__now {
+  padding: 6px 8px;
+  margin: 0;
+}
+
+html.app--compact .player__art-wrap {
+  width: 48px;
+  min-width: 48px;
+}
+
+html.app--compact .player__now .meta__title {
+  font-size: 13px;
+}
+
+html.app--compact .player__now .meta__artist {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+html.app--compact .player__frame iframe {
+  height: 100px !important;
+  min-height: 100px;
+}
+
+html.app--compact .controls,
+html.app--compact .player__plrow {
+  display: none !important;
+}

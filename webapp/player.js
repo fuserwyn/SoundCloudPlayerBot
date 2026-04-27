@@ -1,6 +1,13 @@
 (() => {
   const tg = window.Telegram && window.Telegram.WebApp;
 
+  /** Открытие из кнопки «▶ трек» в чате: не expand(), компактный виджет, UI свёрнут. */
+  const startParamsEarly = new URLSearchParams(window.location.search);
+  const startCompact = startParamsEarly.get("compact") === "1";
+  if (startCompact) {
+    document.documentElement.classList.add("app--compact");
+  }
+
   function applyTelegramTheme() {
     if (!tg || !tg.themeParams) return;
     const t = tg.themeParams;
@@ -48,7 +55,9 @@
 
   if (tg) {
     tg.ready();
-    tg.expand();
+    if (!startCompact) {
+      tg.expand();
+    }
     applyTelegramTheme();
     try {
       if (typeof tg.onEvent === "function") {
@@ -193,11 +202,14 @@
     return null;
   }
 
-  function buildWidgetSrc(trackUrl) {
+  function buildWidgetSrc(trackUrl, showVisual) {
+    if (showVisual === undefined) {
+      showVisual = true;
+    }
     const params = new URLSearchParams({
       url: trackUrl,
       auto_play: "true",
-      visual: "true",
+      visual: showVisual ? "true" : "false",
       hide_related: "true",
       show_comments: "false",
       show_user: "true",
@@ -387,12 +399,20 @@
 
   /**
    * @param {string} rawUrl
-   * @param {{ playlist: { plId: number, urls: string[], index: number } }} [opts] — соседние кнопки = треки плейлиста
+   * @param {{
+   *   playlist?: { plId: number, urls: string[], index: number },
+   *   thumbnail?: string | null,
+   *   compact?: boolean,
+   * }} [opts]
    */
   function loadTrack(rawUrl, opts) {
     const match = SC_URL_RE.exec((rawUrl || "").trim());
     if (!match) return false;
     const trackUrl = match[0];
+    const useCompact =
+      opts && Object.prototype.hasOwnProperty.call(opts, "compact")
+        ? opts.compact
+        : startCompact;
     lastTrackLoadAt = Date.now();
     lastLoadedTrackUrl = trackUrl;
     setNowPlaying({
@@ -421,7 +441,7 @@
     if (widget) {
       widget.load(trackUrl, {
         auto_play: true,
-        visual: true,
+        visual: !useCompact,
         hide_related: true,
         show_comments: false,
         show_reposts: false,
@@ -435,11 +455,14 @@
         },
       });
     } else {
-      iframe.src = buildWidgetSrc(trackUrl);
+      iframe.src = buildWidgetSrc(trackUrl, !useCompact);
       iframe.addEventListener("load", attachWidget, { once: true });
     }
 
     showPlayerView();
+    if (useCompact) {
+      document.documentElement.classList.add("app--compact");
+    }
     if (tg && typeof tg.enableClosingConfirmation === "function") {
       try {
         tg.enableClosingConfirmation(true);
