@@ -21,12 +21,15 @@ from aiogram.types import (
     InlineQuery,
     InlineQueryResultArticle,
     InputTextMessageContent,
+    KeyboardButton,
     LinkPreviewOptions,
     Message,
+    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 from aiogram.utils.markdown import hbold
 
+from app import i18n
 from app.config import Settings
 from app.db import AcceptanceStore, PlaylistSummary
 from app.llm import LLMClient, LLMUnavailable
@@ -53,49 +56,6 @@ def _safe_mp3_filename(title: str, part: int, total: int) -> str:
     return f"{s}.mp3"
 
 
-WELCOME_TEXT = (
-    "Привет! Я работаю с SoundCloud:\n\n"
-    "1) Кинь ссылку на трек SoundCloud — пришлю mp3 с обложкой.\n"
-    "2) Напиши название — найду первые 10 совпадений; после выбора можно открыть в "
-    "плеере, на SoundCloud или скачать MP3. Если не нашлось, AI попробует угадать "
-    "артиста (опечатки, фонетика — например «пинк флойд камфортабли намб») и поищет "
-    "ещё раз.\n"
-    "3) Открой Mini App — плеер и плейлисты; те же плейлисты доступны в чате: "
-    "/pl — смотри, создавай, клади треки из поиска (кнопка «➕ В плейлист»).\n"
-    "4) В любом чате через @бот можно быстро найти трек и отправить ссылку — "
-    "там только прослушивание в плеере или на SoundCloud; mp3 — только в этом чате "
-    "после /terms.\n\n"
-    "Команды:\n"
-    "/start — это сообщение\n"
-    "/player — открыть плеер\n"
-    "/pl — плейлисты (как в Mini App)\n"
-    "/terms — условия использования\n"
-    "/help — помощь"
-)
-
-HELP_TEXT = (
-    "Поддерживаются ссылки вида:\n"
-    "• https://soundcloud.com/&lt;artist&gt;/&lt;track&gt;\n"
-    "• https://m.soundcloud.com/...\n"
-    "• https://on.soundcloud.com/&lt;short&gt;\n\n"
-    "Поиск: пришли название (например, «forss flickermood») — выберу из топ-10, "
-    "потом плеер, SoundCloud или скачать.\n"
-    "Если ничего не нашлось и на сервере включён GROQ_API_KEY, AI попробует узнать "
-    "артиста (даже если ты написал «пинк флойд камфортабли намб» — поищет «pink floyd "
-    "comfortably numb») и поищет ещё раз.\n\n"
-    "Скачивание: лимит Telegram на аудио от ботов — 50 МБ.\n"
-    "Перед скачиванием напоминаю: у части релизов в чат уходит только превью "
-    "(часто ~30 с), целиком — во встроенном плеере или на SoundCloud "
-    "(см. /terms). Перед первым скачиванием — принять условия (/terms).\n"
-    "Mini App плеер: открывается прямо в Telegram, без скачивания. Звук идёт, пока "
-    "открыт Mini App; при полном закрытии окна Telegram обычно останавливает "
-    "воспроизведение (это ограничение платформы, не «фон» как в Spotify).\n"
-    "Inline (@бот в любом чате): только ссылка и кнопки «в плеере» / на SoundCloud — "
-    "без отправки mp3 оттуда.\n\n"
-    "Плейлисты: /pl (в чате) — те же, что в Mini App. Из поиска — «➕ В плейлист»; в "
-    "открытом плейлисте — «Скачать всё (mp3)» (после /terms, до 30 треков за раз)."
-)
-
 CALLBACK_PICK_PREFIX = "pick:"
 CALLBACK_DOWNLOAD_PREFIX = "dld:"  # скачать MP3 после выбора в списке поиска
 CALLBACK_ACCEPT_PREFIX = "accept:"
@@ -115,52 +75,6 @@ SEARCH_LIMIT = 10
 SEARCH_CACHE_SIZE = 2000
 
 TERMS_VERSION = "1.4"
-
-TERMS_TEXT = (
-    "<b>Условия использования</b> (версия " + TERMS_VERSION + ")\n\n"
-    "Этот бот — инструмент общего назначения, который по запросу пользователя "
-    "обращается к публичному API SoundCloud и сохраняет аудиофайл локально для "
-    "передачи через Telegram.\n\n"
-    "<b>Используя бота, ты подтверждаешь, что:</b>\n"
-    "1. Скачиваешь треки <b>исключительно для личного, некоммерческого "
-    "прослушивания</b>.\n"
-    "2. Не будешь распространять, перепродавать, публиковать в открытых "
-    "каналах/платформах или иным образом доводить полученные файлы до "
-    "неопределённого круга лиц.\n"
-    "3. Понимаешь, что авторские права на треки принадлежат их правообладателям, "
-    "а ответственность за правомерность скачивания конкретного трека в твоей "
-    "юрисдикции лежит на тебе как на конечном пользователе.\n"
-    "4. Соблюдаешь Terms of Service SoundCloud и применимое "
-    "законодательство своей страны.\n"
-    "5. Понимаешь, что по требованию правообладателей у части релизов в Telegram "
-    "нельзя выдать весь трек <b>одним</b> MP3: в чат уходит лишь короткое "
-    "превью (часто около 30 секунд), а <b>полный</b> трек в таких случаях "
-    "доступен для прослушивания во встроенном плеере (Mini App) и на "
-    "SoundCloud — так устроен поток у платформы.\n\n"
-    "Бот не хранит скачанные файлы после отправки и не передаёт их третьим лицам. "
-    "Факт твоего согласия (Telegram user_id, username, дата и время по Москве) "
-    "сохраняется как доказательство принятия этих условий.\n\n"
-    "Если ты — правообладатель и хочешь, чтобы бот перестал отдавать твой "
-    "контент, напиши владельцу бота."
-)
-
-TERMS_PROMPT_TEXT = (
-    "Перед скачиванием: у многих треков в чат в виде MP3 уходит не весь трек, "
-    "а превью (часто ~30 с) — из‑за ограничений правообладателей; "
-    "полный трек — во встроенном плеере (Mini App) или на SoundCloud. "
-    "Один раз прими условия — короткое соглашение про личное прослушивание. "
-    "Полный текст: /terms"
-)
-
-# Показываем перед каждой рассылкой MP3 (один трек, плейлист, ссылка в чате).
-DOWNLOAD_COPYRIGHT_WARNING = (
-    "⚠️ <b>Перед скачиванием</b>\n"
-    "Целый «официальный» трек в чат <b>одним</b> файлом нередко <b>недоступен</b> "
-    "из\u2011за прав правообладателей: в MP3 попадает разве что короткое "
-    "<b>превью</b> (часто около 30 с).\n"
-    "Полностью <b>послушать</b> можно во <b>встроенном плеере</b> (кнопка "
-    "«Открыть в плеере» / Mini App) или на SoundCloud — поток идёт по правилам сервиса."
-)
 
 
 class _UrlCache:
@@ -252,11 +166,11 @@ class UserActivityMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-def _format_button_label(idx: int, item: SearchResult) -> str:
+def _format_button_label(idx: int, item: SearchResult, lang: str) -> str:
     parts: list[str] = [f"{idx}."]
     if item.artist:
         parts.append(f"{item.artist} —")
-    parts.append(item.title or "Без названия")
+    parts.append(item.title or i18n.t(lang, "no_title"))
     label = " ".join(parts)
     duration = _format_duration(item.duration)
     if duration:
@@ -280,6 +194,44 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
     llm: LLMClient | None = None
     if settings.groq_api_key:
         llm = LLMClient(api_key=settings.groq_api_key, model=settings.groq_model)
+
+    _TXT_PLAYLISTS = (i18n.t("ru", "k_playlists"), i18n.t("en", "k_playlists"))
+    _TXT_HELP_BTN = (i18n.t("ru", "k_help"), i18n.t("en", "k_help"))
+    _TXT_LANG_RU = i18n.t("ru", "k_lang_ru")
+    _TXT_LANG_EN = i18n.t("en", "k_lang_en")
+    _K_SOUND = i18n.t("ru", "k_soundcloud")  # same in en
+
+    async def _lang_of(user_id: int | None) -> str:
+        if user_id is None:
+            return "ru"
+        return await acceptance_store.get_user_lang(user_id)
+
+    def main_reply_markup(lang: str) -> ReplyKeyboardMarkup:
+        row1: list[KeyboardButton] = []
+        if webapp_url:
+            wu = webapp_url.rstrip("/")
+            row1.append(
+                KeyboardButton(
+                    text=_K_SOUND,
+                    web_app=WebAppInfo(url=f"{wu}/"),
+                )
+            )
+        else:
+            row1.append(KeyboardButton(text=_K_SOUND))
+        row1.append(KeyboardButton(text=i18n.t(lang, "k_playlists")))
+        row1.append(KeyboardButton(text=i18n.t(lang, "k_help")))
+        return ReplyKeyboardMarkup(
+            keyboard=[
+                row1,
+                [
+                    KeyboardButton(text=_TXT_LANG_RU),
+                    KeyboardButton(text=_TXT_LANG_EN),
+                ],
+            ],
+            resize_keyboard=True,
+            is_persistent=True,
+            input_field_placeholder=i18n.t(lang, "input_placeholder"),
+        )
 
     bot_info_cache: dict[str, str] = {}
 
@@ -306,38 +258,48 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         username, _ = await _get_bot_info(bot)
         return username
 
-    def make_track_keyboard(track_url: str) -> InlineKeyboardMarkup:
+    def make_track_keyboard(track_url: str, lang: str) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
         if webapp_url:
-            rows.append([_player_button(webapp_url, track_url, "🎧 Открыть в плеере")])
+            rows.append(
+                [
+                    _player_button(
+                        webapp_url, track_url, i18n.t(lang, "btn_open_player")
+                    )
+                ]
+            )
         rows.append(
-            [InlineKeyboardButton(text="Открыть на SoundCloud", url=track_url)]
+            [InlineKeyboardButton(text=i18n.t(lang, "btn_open_sc"), url=track_url)]
         )
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
-    def start_keyboard() -> InlineKeyboardMarkup | None:
+    def start_keyboard(lang: str) -> InlineKeyboardMarkup | None:
         if not webapp_url:
             return None
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [_player_button(webapp_url, None, "🎧 Открыть плеер")]
+                [
+                    _player_button(
+                        webapp_url, None, i18n.t(lang, "btn_open_player")
+                    )
+                ]
             ]
         )
 
-    def make_search_keyboard(results: list[SearchResult]) -> InlineKeyboardMarkup:
+    def make_search_keyboard(results: list[SearchResult], lang: str) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
         for idx, item in enumerate(results, start=1):
             key = url_cache.put(item.url)
             pick_meta.set(
                 key,
-                (item.title or "Без названия").strip(),
+                (item.title or i18n.t(lang, "no_title")).strip(),
                 (item.artist or "").strip(),
                 item.thumbnail,
             )
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text=_format_button_label(idx, item),
+                        text=_format_button_label(idx, item, lang),
                         callback_data=f"{CALLBACK_PICK_PREFIX}{key}",
                     )
                 ]
@@ -345,7 +307,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         return InlineKeyboardMarkup(inline_keyboard=rows)
 
     def make_post_pick_keyboard(
-        cache_key: str, *, show_playlist: bool = True
+        cache_key: str, lang: str, *, show_playlist: bool = True
     ) -> InlineKeyboardMarkup | None:
         """Плеер, SoundCloud, скачивание — после нажатия на строке в поиске."""
         track_url = url_cache.get(cache_key)
@@ -353,14 +315,20 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             return None
         rows: list[list[InlineKeyboardButton]] = []
         if webapp_url:
-            rows.append([_player_button(webapp_url, track_url, "🎧 Открыть в плеере")])
+            rows.append(
+                [
+                    _player_button(
+                        webapp_url, track_url, i18n.t(lang, "btn_open_player")
+                    )
+                ]
+            )
         rows.append(
-            [InlineKeyboardButton(text="Открыть на SoundCloud", url=track_url)]
+            [InlineKeyboardButton(text=i18n.t(lang, "btn_open_sc"), url=track_url)]
         )
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="Скачать мп3",
+                    text=i18n.t(lang, "btn_download"),
                     callback_data=f"{CALLBACK_DOWNLOAD_PREFIX}{cache_key}",
                 )
             ]
@@ -369,7 +337,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             rows.append(
                 [
                     InlineKeyboardButton(
-                        text="➕ В плейлист",
+                        text=i18n.t(lang, "btn_add_pl"),
                         callback_data=f"{CALLBACK_PL_MENU}{cache_key}",
                     )
                 ]
@@ -379,6 +347,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
     async def _send_mp3_to_chat(
         target: Message,
         url: str,
+        lang: str,
     ) -> str | None:
         """Скачать один трек и отправить одним сообщением с mp3.
 
@@ -393,24 +362,30 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             )
         except SoundCloudError:
             logger.warning("Failed to download %s", url)
-            return "Не скачал с SoundCloud, пропускаю."
+            return i18n.t(lang, "sc_failed")
         except Exception:
             logger.exception("Unexpected error while handling %s", url)
-            return "Ошибка на сервере, пропускаю."
+            return i18n.t(lang, "server_err")
 
         try:
             bot_tag = await get_bot_tag(target.bot)
             base_caption = f"{hbold(track.title)}\n{track.artist}"
             if track.is_preview:
-                cap_extra = (
-                    f"\n\n⚠️ Это превью ~{track.actual_duration} с "
-                    f"(метаданные: {track.duration // 60}:{track.duration % 60:02d}) — "
-                    f"так настроил правообладатель, полный трек в MP3 в чат не отдать."
+                meta = f"{track.duration // 60}:{track.duration % 60:02d}"
+                cap_extra = i18n.t(
+                    lang,
+                    "preview_note",
+                    actual=track.actual_duration,
+                    meta=meta,
                 )
                 if webapp_url:
-                    cap_extra += " Полный трек — кнопка «Открыть в плеере» / на SoundCloud."
+                    cap_extra += i18n.t(
+                        lang,
+                        "preview_full_hint_pl",
+                        btn=i18n.t(lang, "btn_open_player"),
+                    )
                 else:
-                    cap_extra += " Полный трек — на SoundCloud, если открыт поток."
+                    cap_extra += i18n.t(lang, "preview_full_hint_sc")
                 base_caption += cap_extra
             if bot_tag:
                 base_caption += f"\n\nvia {bot_tag}"
@@ -418,12 +393,12 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             parts = list(track.chunk_paths) if track.chunk_paths else [track.file_path]
             n = len(parts)
             if n > 1:
-                base_caption += f"\n\nФайл разбит на {n} частей по лимиту Telegram (50 МБ)."
+                base_caption += f"\n\n{i18n.t(lang, 'file_split', n=n)}"
 
             for idx, part_path in enumerate(parts):
                 caption = base_caption
                 if n > 1:
-                    caption += f"\nЧасть {idx + 1} из {n}."
+                    caption += f"\n{i18n.t(lang, 'part_n', i=idx + 1, n=n)}"
                 await target.bot.send_chat_action(
                     target.chat.id, ChatAction.UPLOAD_VOICE
                 )
@@ -437,13 +412,13 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                     title=track.title,
                     performer=track.artist,
                     duration=part_dur,
-                    reply_markup=make_track_keyboard(track.webpage_url)
+                    reply_markup=make_track_keyboard(track.webpage_url, lang)
                     if idx == 0
                     else None,
                 )
         except Exception:
             logger.exception("Failed to send audio for %s", url)
-            return "Не получилось отправить файл в Telegram."
+            return i18n.t(lang, "send_fail")
         finally:
             track.cleanup()
         return None
@@ -452,15 +427,13 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         chat_message: Message,
         status: Message,
         url: str,
+        lang: str,
     ) -> None:
         """Скачать трек SoundCloud и отправить mp3."""
-        err = await _send_mp3_to_chat(chat_message, url)
+        err = await _send_mp3_to_chat(chat_message, url, lang)
         if err:
-            km = (
-                make_track_keyboard(url)
-                if (webapp_url and "50 МБ" in err)
-                else None
-            )
+            _sz = "50" in err or "МБ" in err or "MB" in err
+            km = make_track_keyboard(url, lang) if (webapp_url and _sz) else None
             await status.edit_text(err, reply_markup=km)
             return
         try:
@@ -468,35 +441,37 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         except Exception:
             pass
 
-    def _acceptance_keyboard(key: str) -> InlineKeyboardMarkup:
+    def _acceptance_keyboard(key: str, lang: str) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="✅ Принимаю",
+                        text=i18n.t(lang, "btn_accept"),
                         callback_data=f"{CALLBACK_ACCEPT_PREFIX}{key}",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="📄 Прочитать полный текст",
+                        text=i18n.t(lang, "btn_read_full"),
                         callback_data=f"{CALLBACK_ACCEPT_PREFIX}show",
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        text="❌ Не сейчас",
+                        text=i18n.t(lang, "btn_not_now"),
                         callback_data=CALLBACK_DECLINE,
                     )
                 ],
             ]
         )
 
-    async def _send_acceptance_prompt(target_message: Message, url: str) -> None:
+    async def _send_acceptance_prompt(
+        target_message: Message, url: str, lang: str
+    ) -> None:
         key = pending_cache.put(url)
         await target_message.answer(
-            TERMS_PROMPT_TEXT,
-            reply_markup=_acceptance_keyboard(key),
+            i18n.t(lang, "terms_prompt"),
+            reply_markup=_acceptance_keyboard(key, lang),
             disable_web_page_preview=True,
         )
 
@@ -505,21 +480,24 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             return True
         if await acceptance_store.has_accepted(message.from_user.id, TERMS_VERSION):
             return True
-        await _send_acceptance_prompt(message, url)
+        lang = await _lang_of(message.from_user.id)
+        await _send_acceptance_prompt(message, url, lang)
         return False
 
-    async def _send_pl_bulk_terms_prompt(target_message: Message, pl_id: int) -> None:
+    async def _send_pl_bulk_terms_prompt(
+        target_message: Message, pl_id: int, lang: str
+    ) -> None:
         pkey = pending_cache.put(f"plbulk:{pl_id}")
         await target_message.answer(
-            TERMS_PROMPT_TEXT,
-            reply_markup=_acceptance_keyboard(pkey),
+            i18n.t(lang, "terms_prompt"),
+            reply_markup=_acceptance_keyboard(pkey, lang),
             disable_web_page_preview=True,
         )
 
-    def _format_playlist_message(pl_name: str, entries) -> str:
+    def _format_playlist_message(pl_name: str, entries, lang: str) -> str:
         head = f"🎧 {html.escape(pl_name)}"
         if not entries:
-            return head + "\n\nПлейлист пуст. Добавь треки из поиска (➕ В плейлист) или в Mini App."
+            return head + f"\n\n{i18n.t(lang, 'pl_empty_body')}"
         lines: list[str] = [head, ""]
         for i, e in enumerate(entries, start=1):
             t = f"{e.title} — {e.artist}" if (e.artist or "").strip() else e.title
@@ -540,7 +518,9 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             )
         return InlineKeyboardMarkup(inline_keyboard=kb)
 
-    def _playlist_tracks_keyboard(playlist_id: int, entries) -> InlineKeyboardMarkup:
+    def _playlist_tracks_keyboard(
+        playlist_id: int, entries, lang: str
+    ) -> InlineKeyboardMarkup:
         rrows: list[list[InlineKeyboardButton]] = []
         for i, e in enumerate(entries, start=1):
             one: list[InlineKeyboardButton] = []
@@ -558,7 +538,9 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         rrows.append(
             [
                 InlineKeyboardButton(
-                    text=f"⬇ Скачать все mp3 (≤{BULK_MP3_MAX})",
+                    text=i18n.t(
+                        lang, "bulk_dl_all", m=BULK_MP3_MAX
+                    ),
                     callback_data=f"{CALLBACK_PL_BULK}{playlist_id}",
                 )
             ]
@@ -566,7 +548,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         rrows.append(
             [
                 InlineKeyboardButton(
-                    text="🗑 Удалить плейлист",
+                    text=i18n.t(lang, "pl_del_btn"),
                     callback_data=f"{CALLBACK_PL_DEL}{playlist_id}",
                 )
             ]
@@ -574,43 +556,45 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         return InlineKeyboardMarkup(inline_keyboard=rrows)
 
     async def _open_playlist_view_message(
-        message: Message, user_id: int, pl_id: int
+        message: Message, user_id: int, pl_id: int, lang: str
     ) -> bool:
         pl_name = await acceptance_store.playlist_name(user_id, pl_id)
         if pl_name is None:
-            await message.reply("Плейлист не найден. /pl")
+            await message.reply(i18n.t(lang, "pl_not_found"))
             return False
         tr = await acceptance_store.playlist_get_tracks(user_id, pl_id)
         if tr is None:
-            await message.reply("Плейлист не найден. /pl")
+            await message.reply(i18n.t(lang, "pl_not_found"))
             return False
-        text = _format_playlist_message(pl_name, tr)
+        text = _format_playlist_message(pl_name, tr, lang)
         await message.reply(
             text,
-            reply_markup=_playlist_tracks_keyboard(pl_id, tr),
+            reply_markup=_playlist_tracks_keyboard(pl_id, tr, lang),
             parse_mode=ParseMode.HTML,
         )
         return True
 
-    async def _open_playlist_view_edit(cq: CallbackQuery, user_id: int, pl_id: int) -> None:
+    async def _open_playlist_view_edit(
+        cq: CallbackQuery, user_id: int, pl_id: int, lang: str
+    ) -> None:
         if not cq.message:
             return
         pl_name = await acceptance_store.playlist_name(user_id, pl_id)
         if pl_name is None:
             try:
-                await cq.message.edit_text("Плейлист не найден.")
+                await cq.message.edit_text(i18n.t(lang, "pl_not_found"))
             except Exception:
                 pass
             return
         tr = await acceptance_store.playlist_get_tracks(user_id, pl_id)
         if tr is None:
             try:
-                await cq.message.edit_text("Плейлист не найден.")
+                await cq.message.edit_text(i18n.t(lang, "pl_not_found"))
             except Exception:
                 pass
             return
-        text = _format_playlist_message(pl_name, tr)
-        kb = _playlist_tracks_keyboard(pl_id, tr)
+        text = _format_playlist_message(pl_name, tr, lang)
+        kb = _playlist_tracks_keyboard(pl_id, tr, lang)
         try:
             await cq.message.edit_text(
                 text, reply_markup=kb, parse_mode=ParseMode.HTML
@@ -623,41 +607,41 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             except Exception:
                 pass
 
-    async def _run_pl_bulk(target: Message, user_id: int, pl_id: int) -> None:
+    async def _run_pl_bulk(
+        target: Message, user_id: int, pl_id: int, lang: str
+    ) -> None:
         name = await acceptance_store.playlist_name(user_id, pl_id)
         if name is None:
             await target.bot.send_message(
                 target.chat.id,
-                "Плейлист не найден.",
+                i18n.t(lang, "pl_not_found"),
             )
             return
         tracks = await acceptance_store.playlist_get_tracks(user_id, pl_id)
         if tracks is None:
             await target.bot.send_message(
                 target.chat.id,
-                "Плейлист не найден.",
+                i18n.t(lang, "pl_not_found"),
             )
             return
         if not tracks:
             await target.bot.send_message(
                 target.chat.id,
-                "В плейлисте нет треков.",
+                i18n.t(lang, "pl_tracks_empty"),
             )
             return
         n = len(tracks)
         if n > BULK_MP3_MAX:
             await target.bot.send_message(
                 target.chat.id,
-                f"В плейлисте {n} треков. За раз отправляю не больше {BULK_MP3_MAX} mp3 — "
-                f"сократи плейлист в /pl / Mini App и нажми снова, либо качай остаток "
-                f"другой порцией после удаления уже скачанных.",
+                i18n.t(lang, "pl_bulk_too_many", n=n, m=BULK_MP3_MAX),
             )
             return
         # send_message: после accept сообщение с «Принимаю» может быть удалено
         st = await target.bot.send_message(
             target.chat.id,
-            DOWNLOAD_COPYRIGHT_WARNING
-            + f"\n\n🎧 «{html.escape(name)}»\n⏳ 0/{n}…",
+            i18n.t(lang, "download_warn")
+            + f"\n\n{i18n.t(lang, 'pl_bulk_status', name=html.escape(name), n=n)}",
             parse_mode=ParseMode.HTML,
         )
         ok = 0
@@ -665,23 +649,21 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         for i, t in enumerate(tracks, start=1):
             try:
                 await st.edit_text(
-                    f"🎧 «{html.escape(name)}»\n⏳ {i}/{n}…",
+                    f"🎧 «{html.escape(name)}»\n"
+                    f"{i18n.t(lang, 'progress_bulk', i=i, n=n)}",
                     parse_mode=ParseMode.HTML,
                 )
             except Exception:
                 pass
-            emsg = await _send_mp3_to_chat(target, t.track_url)
+            emsg = await _send_mp3_to_chat(target, t.track_url, lang)
             if emsg is None:
                 ok += 1
             else:
                 err += 1
             if i < n:
                 await asyncio.sleep(BULK_MP3_DELAY_SEC)
-        final = (
-            f"🎧 «{html.escape(name)}»\n"
-            f"Готово: {ok} файлов, сбой/пропуск: {err}. "
-            f"Каждый трек — отдельное сообщение; лимит 50 МБ на один файл "
-            f"(не на весь плейлист). Дальше — SoundCloud / сеть."
+        final = i18n.t(
+            lang, "pl_bulk_final", name=html.escape(name), ok=ok, err=err
         )
         try:
             await st.edit_text(final, parse_mode=ParseMode.HTML)
@@ -694,31 +676,34 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
         payload = (message.text or "").partition(" ")[2].strip()
         if payload.startswith("dl_"):
             key = payload[3:]
             url = url_cache.get(key)
             if not url:
+                tag = await get_bot_tag(message.bot)
                 await message.answer(
-                    "Эта ссылка устарела — поищи трек заново через @"
-                    f"{await get_bot_username(message.bot)} или просто пришли название."
+                    i18n.t(lang, "start_expired_user", tag=tag or "…")
                 )
                 return
             if not await _ensure_accepted_or_prompt(message, url):
                 return
             status = await message.answer(
-                DOWNLOAD_COPYRIGHT_WARNING + "\n\nКачаю выбранный трек…",
+                i18n.t(lang, "download_warn")
+                + f"\n\n{i18n.t(lang, 'downloading_one')}",
                 parse_mode=ParseMode.HTML,
+                reply_markup=main_reply_markup(lang),
             )
             await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
-            await deliver_track(message, status, url)
+            await deliver_track(message, status, url, lang)
             return
 
         try:
             await message.answer(
-                WELCOME_TEXT,
+                i18n.t(lang, "welcome"),
                 disable_web_page_preview=True,
-                reply_markup=start_keyboard(),
+                reply_markup=main_reply_markup(lang),
             )
         except TelegramBadRequest as exc:
             logger.warning(
@@ -726,61 +711,62 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 exc,
             )
             await message.answer(
-                WELCOME_TEXT,
+                i18n.t(lang, "welcome"),
                 disable_web_page_preview=True,
             )
 
     @router.message(Command("help"))
     async def on_help(message: Message) -> None:
-        await message.answer(HELP_TEXT, disable_web_page_preview=True)
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
+        await message.answer(
+            i18n.t(lang, "help"),
+            disable_web_page_preview=True,
+        )
 
     @router.message(Command("terms"))
     async def on_terms(message: Message) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
         suffix = ""
         if message.from_user:
             accepted = await acceptance_store.has_accepted(
                 message.from_user.id, TERMS_VERSION
             )
             suffix = (
-                f"\n\n✅ Ты уже принял эту версию условий ({TERMS_VERSION})."
+                "\n\n" + i18n.t(lang, "terms_footer_already", ver=TERMS_VERSION)
                 if accepted
-                else "\n\nЯ покажу кнопку «Принимаю» при первом скачивании."
+                else "\n\n" + i18n.t(lang, "terms_footer_later")
             )
-        await message.answer(TERMS_TEXT + suffix, disable_web_page_preview=True)
+        await message.answer(
+            i18n.terms_html(lang, TERMS_VERSION) + suffix,
+            disable_web_page_preview=True,
+        )
 
     @router.message(Command("player"))
     async def on_player(message: Message) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
         if not webapp_url:
-            await message.answer(
-                "Mini App плеер сейчас недоступен — WEBAPP_URL не настроен."
-            )
+            await message.answer(i18n.t(lang, "webapp_unavailable"))
             return
         try:
             await message.answer(
-                "Открыть встроенный плеер:",
-                reply_markup=start_keyboard(),
+                i18n.t(lang, "open_player"),
+                reply_markup=start_keyboard(lang),
             )
         except TelegramBadRequest as exc:
             logger.warning("/player: WebApp keyboard failed: %s", exc)
-            await message.answer(
-                "Открыть плеер: проверь WEBAPP_URL (нужен https). "
-                "Сейчас кнопку показать не удалось — открой мини-апп из меня бота вручную."
-            )
+            await message.answer(i18n.t(lang, "open_player_fail"))
 
-    @router.message(
-        Command("pl", "playlists"),
-        F.chat.type == ChatType.PRIVATE,
-    )
-    async def on_playlists(message: Message, command: CommandObject) -> None:
+    async def _playlists_cmd_body(
+        message: Message, args: str, lang: str
+    ) -> None:
         if not message.from_user:
             return
         uid = message.from_user.id
-        args = (command.args or "").strip()
         al = args.lower()
         if al.startswith("new "):
             name = args[4:].strip()
             if not name:
-                await message.reply("Использование: /pl new Название")
+                await message.reply(i18n.t(lang, "pl_new_usage"))
                 return
             pid, err = await acceptance_store.playlist_create(uid, name)
             if err:
@@ -788,59 +774,121 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 return
             assert pid is not None
             await message.reply(
-                f"Плейлист «{html.escape(name)}» готов. Те же плейлисты в Mini App. "
-                f"Клади треки кнопкой «➕ В плейлист» после поиска.",
+                i18n.t(
+                    lang,
+                    "pl_after_create",
+                    name=html.escape(name),
+                ),
                 parse_mode=ParseMode.HTML,
             )
             return
         if al == "new":
-            await message.reply("Использование: /pl new Название")
+            await message.reply(i18n.t(lang, "pl_new_usage"))
             return
         if args.isdigit():
-            await _open_playlist_view_message(message, uid, int(args))
+            await _open_playlist_view_message(message, uid, int(args), lang)
             return
         if args:
-            await message.reply(
-                "Непонятно. /pl — список, /pl new Имя, /pl 3 — открыть id 3"
-            )
+            await message.reply(i18n.t(lang, "pl_confused"))
             return
         rows = await acceptance_store.playlists_list(uid)
         if not rows:
-            await message.reply(
-                "Плейлистов пока нет. Создай: /pl new Мои треки\n"
-                "То же в Mini App → вкладка «Плейлисты»."
-            )
+            await message.reply(i18n.t(lang, "pl_none_title"))
             return
         await message.reply(
-            "Твои плейлисты (синхрон с Mini App). Нажми на строку или /pl 5 по id.",
+            i18n.t(lang, "pl_list_intro"),
             reply_markup=_pl_summaries_keyboard(rows),
+        )
+
+    @router.message(
+        Command("pl", "playlists"),
+        F.chat.type == ChatType.PRIVATE,
+    )
+    async def on_playlists(message: Message, command: CommandObject) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
+        args = (command.args or "").strip()
+        await _playlists_cmd_body(message, args, lang)
+
+    @router.message(
+        F.text.in_({_TXT_LANG_RU, _TXT_LANG_EN}),
+        F.chat.type == ChatType.PRIVATE,
+    )
+    async def on_lang_button(message: Message) -> None:
+        if not message.from_user:
+            return
+        text = (message.text or "").strip()
+        if text == _TXT_LANG_RU:
+            await acceptance_store.set_user_lang(message.from_user.id, "ru")
+            lang = "ru"
+        else:
+            await acceptance_store.set_user_lang(message.from_user.id, "en")
+            lang = "en"
+        await message.answer(
+            i18n.t(lang, "language_set_ru")
+            if lang == "ru"
+            else i18n.t(lang, "language_set_en"),
+            reply_markup=main_reply_markup(lang),
+        )
+
+    @router.message(
+        F.text.in_(_TXT_PLAYLISTS),
+        F.chat.type == ChatType.PRIVATE,
+    )
+    async def on_playlists_button(message: Message) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
+        await _playlists_cmd_body(message, "", lang)
+
+    @router.message(
+        F.text.in_(_TXT_HELP_BTN),
+        F.chat.type == ChatType.PRIVATE,
+    )
+    async def on_help_button(message: Message) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
+        await message.answer(
+            i18n.t(lang, "help"),
+            disable_web_page_preview=True,
+        )
+
+    @router.message(
+        F.text == _K_SOUND,
+        F.chat.type == ChatType.PRIVATE,
+    )
+    async def on_soundcloud_text(message: Message) -> None:
+        """Текст с кнопки без WebApp; при WEBAPP настроен — как обычный поиск."""
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
+        if webapp_url:
+            await _do_search(message, _K_SOUND, lang)
+            return
+        await message.answer(
+            i18n.t(lang, "webapp_unavailable"),
+            reply_markup=main_reply_markup(lang),
         )
 
     @router.message(Command("search"))
     async def on_search_cmd(message: Message) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
         query = (message.text or "").partition(" ")[2].strip()
         if not query:
-            await message.reply(
-                "Использование: /search <название трека>\n"
-                "Или просто пришли название без команды."
-            )
+            await message.reply(i18n.t(lang, "search_no_cmd"), parse_mode=ParseMode.HTML)
             return
-        await _do_search(message, query)
+        await _do_search(message, query, lang)
 
     @router.message(F.text)
     async def on_text(message: Message) -> None:
+        lang = await _lang_of(message.from_user.id if message.from_user else None)
         text = message.text or ""
         url = find_soundcloud_url(text)
         if url:
             if not await _ensure_accepted_or_prompt(message, url):
                 return
             status = await message.reply(
-                DOWNLOAD_COPYRIGHT_WARNING
-                + "\n\nКачаю трек… это займёт несколько секунд.",
+                i18n.t(lang, "download_warn")
+                + f"\n\n{i18n.t(lang, 'downloading_start')}",
                 parse_mode=ParseMode.HTML,
+                reply_markup=main_reply_markup(lang),
             )
             await message.bot.send_chat_action(message.chat.id, ChatAction.RECORD_VOICE)
-            await deliver_track(message, status, url)
+            await deliver_track(message, status, url, lang)
             return
 
         # В группах/каналах не рассматривать произвольный текст как поиск — иначе бот
@@ -848,34 +896,33 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if message.chat.type != ChatType.PRIVATE:
             return
 
-        await _do_search(message, text)
+        await _do_search(message, text, lang)
 
-    async def _do_search(message: Message, query: str) -> None:
+    async def _do_search(message: Message, query: str, lang: str) -> None:
         query = query.strip()
         if len(query) < 2:
-            await message.reply(
-                "Слишком короткий запрос. Дай хотя бы 2 символа или пришли ссылку на трек."
-            )
+            await message.reply(i18n.t(lang, "search_too_short"))
             return
 
-        status = await message.reply(f"Ищу «{_truncate(query, 80)}»…")
+        status = await message.reply(
+            i18n.t(lang, "search_looking", q=_truncate(query, 80))
+        )
 
         try:
             results = await search_tracks(query, limit=SEARCH_LIMIT)
         except SoundCloudError as exc:
             logger.warning("Search failed for %r: %s", query, exc)
-            await status.edit_text("Не получилось выполнить поиск. Попробуй ещё раз.")
+            await status.edit_text(i18n.t(lang, "search_fail"))
             return
         except Exception:
             logger.exception("Unexpected search error for %r", query)
-            await status.edit_text("Что-то сломалось при поиске. Попробуй позже.")
+            await status.edit_text(i18n.t(lang, "search_broken"))
             return
 
         if results:
             await status.edit_text(
-                f"Нашёл {len(results)} треков. Нажми на вариант — дальше можно "
-                f"открыть в плеере, на SoundCloud или скачать MP3.",
-                reply_markup=make_search_keyboard(results),
+                i18n.t(lang, "found_intro", n=len(results)),
+                reply_markup=make_search_keyboard(results, lang),
             )
             return
 
@@ -884,7 +931,12 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             if normalized and normalized.lower() != query.lower():
                 try:
                     await status.edit_text(
-                        f"Не нашёл «{_truncate(query, 40)}». Пробую «{_truncate(normalized, 60)}»…"
+                        i18n.t(
+                            lang,
+                            "search_llm_try",
+                            q1=_truncate(query, 40),
+                            q2=_truncate(normalized, 60),
+                        )
                     )
                 except Exception:
                     pass
@@ -898,16 +950,18 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                     results = []
                 if results:
                     await status.edit_text(
-                        f"По «{_truncate(query, 40)}» ничего не нашёл, "
-                        f"но по «{_truncate(normalized, 60)}» нашёл {len(results)}. "
-                        f"Нажми на вариант — плеер, SoundCloud или скачать MP3.",
-                        reply_markup=make_search_keyboard(results),
+                        i18n.t(
+                            lang,
+                            "search_llm_found",
+                            q1=_truncate(query, 40),
+                            q2=_truncate(normalized, 60),
+                            n=len(results),
+                        ),
+                        reply_markup=make_search_keyboard(results, lang),
                     )
                     return
 
-        await status.edit_text(
-            "Ничего не нашёл. Попробуй переформулировать или пришли прямую ссылку."
-        )
+        await status.edit_text(i18n.t(lang, "search_nothing"))
 
     async def _try_normalize(query: str) -> str | None:
         if not llm:
@@ -921,6 +975,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
     @router.inline_query()
     async def on_inline(iq: InlineQuery) -> None:
         query = (iq.query or "").strip()
+        lang = await _lang_of(iq.from_user.id if iq.from_user else None)
         if len(query) < 2:
             await iq.answer(results=[], cache_time=5, is_personal=False)
             return
@@ -957,20 +1012,25 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 kb_rows.append(
                     [
                         InlineKeyboardButton(
-                            text="🎧 Открыть в плеере",
+                            text=i18n.t(lang, "btn_open_player"),
                             url=f"{webapp_url}/?track={quote(item.url, safe='')}",
                         )
                     ]
                 )
             kb_rows.append(
-                [InlineKeyboardButton(text="Открыть на SoundCloud", url=item.url)]
+                [
+                    InlineKeyboardButton(
+                        text=i18n.t(lang, "btn_open_sc"),
+                        url=item.url,
+                    )
+                ]
             )
             if bot_username:
                 dl_key = url_cache.put(item.url)
                 kb_rows.append(
                     [
                         InlineKeyboardButton(
-                            text="Скачать мп3",
+                            text=i18n.t(lang, "btn_download"),
                             url=f"https://t.me/{bot_username}?start=dl_{dl_key}",
                         )
                     ]
@@ -980,7 +1040,10 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             articles.append(
                 InlineQueryResultArticle(
                     id=uuid.uuid4().hex,
-                    title=_truncate(item.title or "Без названия", 64),
+                    title=_truncate(
+                        item.title or i18n.t(lang, "no_title"),
+                        64,
+                    ),
                     description=_truncate(description, 80),
                     thumbnail_url=item.thumbnail or None,
                     input_message_content=InputTextMessageContent(
@@ -1004,15 +1067,18 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not cq.data or not cq.message:
             await cq.answer()
             return
+        lang = await _lang_of(cq.from_user.id if cq.from_user else None)
         key = cq.data[len(CALLBACK_PICK_PREFIX):]
         url = url_cache.get(key)
         if not url:
-            await cq.answer("Список устарел, поищи заново.", show_alert=True)
+            await cq.answer(i18n.t(lang, "cq_list_stale"), show_alert=True)
             return
         show_pl = cq.message.chat.type == ChatType.PRIVATE
-        pick_kb = make_post_pick_keyboard(key, show_playlist=show_pl)
+        pick_kb = make_post_pick_keyboard(
+            key, lang, show_playlist=show_pl
+        )
         if not pick_kb:
-            await cq.answer("Список устарел, поищи заново.", show_alert=True)
+            await cq.answer(i18n.t(lang, "cq_list_stale"), show_alert=True)
             return
 
         meta = pick_meta.get(key)
@@ -1025,11 +1091,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             if artist:
                 lines.append(artist)
         else:
-            lines = ["Трек"]
-        pl_hint = " Или ➕ в плейлист — кнопка ниже." if show_pl else ""
+            lines = [i18n.t(lang, "track_default")]
+        pl_hint = i18n.t(lang, "pick_pl_or_add") if show_pl else ""
         text = (
             "\n".join(lines)
-            + "\n\nПлеер, SoundCloud, скачать MP3."
+            + f"\n\n{i18n.t(lang, 'pick_actions')}"
             + pl_hint
         )
         await cq.answer()
@@ -1046,19 +1112,23 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not cq.data or not cq.from_user or not cq.message:
             await cq.answer()
             return
+        lang = await _lang_of(cq.from_user.id)
         key = cq.data[len(CALLBACK_DOWNLOAD_PREFIX):]
         url = url_cache.get(key)
         if not url:
-            await cq.answer("Ссылка устарела, поищи заново.", show_alert=True)
+            await cq.answer(i18n.t(lang, "cq_link_stale"), show_alert=True)
             return
         if not await acceptance_store.has_accepted(
             cq.from_user.id, TERMS_VERSION
         ):
             await cq.answer()
-            await _send_acceptance_prompt(cq.message, url)
+            await _send_acceptance_prompt(cq.message, url, lang)
             return
-        await cq.answer("Качаю…")
-        progress = DOWNLOAD_COPYRIGHT_WARNING + "\n\nКачаю трек…"
+        await cq.answer(i18n.t(lang, "downloading_short"))
+        progress = (
+            i18n.t(lang, "download_warn")
+            + f"\n\n{i18n.t(lang, 'downloading_start')}"
+        )
         try:
             await cq.message.edit_text(
                 progress,
@@ -1069,7 +1139,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         await cq.message.bot.send_chat_action(
             cq.message.chat.id, ChatAction.RECORD_VOICE
         )
-        await deliver_track(cq.message, cq.message, url)
+        await deliver_track(cq.message, cq.message, url, lang)
 
     @router.callback_query(F.data.startswith(CALLBACK_ACCEPT_PREFIX))
     async def on_accept(cq: CallbackQuery) -> None:
@@ -1077,11 +1147,15 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await cq.answer()
             return
 
+        lang = await _lang_of(cq.from_user.id)
         payload = cq.data[len(CALLBACK_ACCEPT_PREFIX):]
 
         if payload == "show":
             await cq.answer()
-            await cq.message.answer(TERMS_TEXT, disable_web_page_preview=True)
+            await cq.message.answer(
+                i18n.terms_html(lang, TERMS_VERSION),
+                disable_web_page_preview=True,
+            )
             return
 
         raw = pending_cache.get(payload)
@@ -1090,14 +1164,11 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             username=cq.from_user.username,
             terms_version=TERMS_VERSION,
         )
-        await cq.answer("Спасибо! Согласие сохранено.")
+        await cq.answer(i18n.t(lang, "accept_thanks"))
 
         if not raw:
             try:
-                await cq.message.edit_text(
-                    "Согласие принято. Заявка на скачивание устарела — пришли "
-                    "ссылку или название трека ещё раз."
-                )
+                await cq.message.edit_text(i18n.t(lang, "accept_stale"))
             except Exception:
                 pass
             return
@@ -1107,7 +1178,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 pl_id = int(raw.split(":", 1)[1])
             except (ValueError, IndexError):
                 try:
-                    await cq.message.edit_text("Согласие сохранено, но заявка сбой.")
+                    await cq.message.edit_text(i18n.t(lang, "accept_err"))
                 except Exception:
                     pass
                 return
@@ -1115,23 +1186,21 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 await cq.message.delete()
             except Exception:
                 pass
-            await _run_pl_bulk(cq.message, cq.from_user.id, pl_id)
+            await _run_pl_bulk(cq.message, cq.from_user.id, pl_id, lang)
             return
 
         url = raw
         if not str(url).startswith("http"):
             try:
-                await cq.message.edit_text(
-                    "Согласие принято, но ссылка устарела — пришли снова."
-                )
+                await cq.message.edit_text(i18n.t(lang, "accept_stale_url"))
             except Exception:
                 pass
             return
 
         try:
             await cq.message.edit_text(
-                DOWNLOAD_COPYRIGHT_WARNING
-                + "\n\nСогласие принято. Качаю выбранный трек…",
+                i18n.t(lang, "download_warn")
+                + f"\n\n{i18n.t(lang, 'downloading_one')}",
                 parse_mode=ParseMode.HTML,
             )
         except Exception:
@@ -1139,19 +1208,16 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         await cq.message.bot.send_chat_action(
             cq.message.chat.id, ChatAction.RECORD_VOICE
         )
-        await deliver_track(cq.message, cq.message, url)
+        await deliver_track(cq.message, cq.message, url, lang)
 
     @router.callback_query(F.data == CALLBACK_DECLINE)
     async def on_decline(cq: CallbackQuery) -> None:
         await cq.answer()
-        if not cq.message:
+        if not cq.message or not cq.from_user:
             return
+        lang = await _lang_of(cq.from_user.id)
         try:
-            await cq.message.edit_text(
-                "Окей, без проблем. Если передумаешь — пришли ссылку или название "
-                "трека снова, я ещё раз покажу условия. Полный текст всегда "
-                "доступен по /terms."
-            )
+            await cq.message.edit_text(i18n.t(lang, "decline_body"))
         except Exception:
             pass
 
@@ -1160,26 +1226,36 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not cq.data or not cq.from_user or not cq.message:
             await cq.answer()
             return
+        lang = await _lang_of(cq.from_user.id)
         if cq.message.chat.type != ChatType.PRIVATE:
-            await cq.answer("Плейлисты только в личке с ботом.", show_alert=True)
+            await cq.answer(
+                i18n.t(lang, "pl_only_private"), show_alert=True
+            )
             return
         key = cq.data[len(CALLBACK_PL_MENU):]
         if not key or not url_cache.get(key):
-            await cq.answer("Список устарел — поищи снова.", show_alert=True)
+            await cq.answer(
+                i18n.t(lang, "cq_list_stale"), show_alert=True
+            )
             return
         rows = await acceptance_store.playlists_list(cq.from_user.id)
         if not rows:
-            await cq.answer("Создай: /pl new Название", show_alert=True)
+            await cq.answer(
+                i18n.t(lang, "pl_new_hint_alert"), show_alert=True
+            )
             return
         meta = pick_meta.get(key)
+        q = i18n.t(lang, "pl_what_name_full")
         if meta:
             t0, a0 = meta[0], meta[1]
             if a0:
-                head = f"{html.escape(t0)}\n{html.escape(a0)}\n\nКуда добавить?"
+                head = i18n.t(
+                    lang, "pl_add_head1", title=html.escape(t0), artist=html.escape(a0), q=q
+                )
             else:
-                head = f"{html.escape(t0)}\n\nКуда добавить?"
+                head = i18n.t(lang, "pl_add_head0", title=html.escape(t0), q=q)
         else:
-            head = "Куда добавить трек?"
+            head = q
         pl_rows: list[list[InlineKeyboardButton]] = [
             [
                 InlineKeyboardButton(
@@ -1211,22 +1287,25 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not cq.data or not cq.from_user or not cq.message:
             await cq.answer()
             return
+        lang = await _lang_of(cq.from_user.id)
         rest = cq.data[len(CALLBACK_PL_ADD):]
         try:
             pl_s, key = rest.split(":", 1)
             pl_id = int(pl_s)
         except (ValueError, IndexError):
-            await cq.answer("Ошибка", show_alert=True)
+            await cq.answer(i18n.t(lang, "bad_callback"), show_alert=True)
             return
         url = url_cache.get(key)
         if not url:
-            await cq.answer("Ссылка устарела.", show_alert=True)
+            await cq.answer(
+                i18n.t(lang, "cq_link_stale"), show_alert=True
+            )
             return
         meta = pick_meta.get(key)
         if meta:
             title, ar, th = meta[0], meta[1], meta[2]
         else:
-            title, ar, th = "Без названия", "", None
+            title, ar, th = i18n.t(lang, "no_title"), "", None
         err = await acceptance_store.playlist_add_track(
             cq.from_user.id, pl_id, url, title, ar, th
         )
@@ -1234,8 +1313,13 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await cq.answer(err, show_alert=True)
             return
         pname = await acceptance_store.playlist_name(cq.from_user.id, pl_id) or ""
-        await cq.answer(f"Добавлено в «{pname[:40]}»" if pname else "Ок", show_alert=True)
-        tail = "Плеер, MP3, плейлист — снова кнопки ниже."
+        ack = (
+            i18n.t(lang, "pl_added", name=pname[:40])
+            if pname
+            else i18n.t(lang, "pl_ok")
+        )
+        await cq.answer(ack, show_alert=True)
+        tail = i18n.t(lang, "pl_tail")
         if meta and meta[0]:
             t0, a0 = meta[0], (meta[1] or "").strip()
             if a0:
@@ -1245,7 +1329,9 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         else:
             back = tail
         kb = make_post_pick_keyboard(
-            key, show_playlist=cq.message.chat.type == ChatType.PRIVATE
+            key,
+            lang,
+            show_playlist=cq.message.chat.type == ChatType.PRIVATE,
         )
         if kb:
             try:
@@ -1264,7 +1350,8 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not raw.isdigit():
             await cq.answer()
             return
-        await _open_playlist_view_edit(cq, cq.from_user.id, int(raw))
+        lang = await _lang_of(cq.from_user.id)
+        await _open_playlist_view_edit(cq, cq.from_user.id, int(raw), lang)
         await cq.answer()
 
     @router.callback_query(F.data.startswith(CALLBACK_PL_DEL))
@@ -1272,6 +1359,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         if not cq.data or not cq.from_user or not cq.message:
             await cq.answer()
             return
+        lang = await _lang_of(cq.from_user.id)
         raw = cq.data[len(CALLBACK_PL_DEL):]
         if not raw.isdigit():
             await cq.answer()
@@ -1279,12 +1367,14 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
         pl_id = int(raw)
         if await acceptance_store.playlist_delete(cq.from_user.id, pl_id):
             try:
-                await cq.message.edit_text("Плейлист удалён (и в Mini App пропадёт).")
+                await cq.message.edit_text(i18n.t(lang, "pl_deleted"))
             except Exception:
                 pass
             await cq.answer()
         else:
-            await cq.answer("Не найден", show_alert=True)
+            await cq.answer(
+                i18n.t(lang, "pl_not_found_nb"), show_alert=True
+            )
 
     @router.callback_query(F.data.startswith(CALLBACK_PL_RMT))
     async def on_pl_remove_track(cq: CallbackQuery) -> None:
@@ -1299,11 +1389,14 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             await cq.answer()
             return
         uid = cq.from_user.id
+        lang = await _lang_of(uid)
         if not await acceptance_store.playlist_remove_track(uid, pl_id, tr_id):
-            await cq.answer("Не найден", show_alert=True)
+            await cq.answer(
+                i18n.t(lang, "pl_not_found_nb"), show_alert=True
+            )
             return
-        await cq.answer("Убрано")
-        await _open_playlist_view_edit(cq, uid, pl_id)
+        await cq.answer(i18n.t(lang, "pl_removed"))
+        await _open_playlist_view_edit(cq, uid, pl_id, lang)
 
     @router.callback_query(F.data.startswith(CALLBACK_PL_BULK))
     async def on_pl_bulk_download(cq: CallbackQuery) -> None:
@@ -1316,15 +1409,16 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
             return
         pl_id = int(raw)
         uid = cq.from_user.id
+        lang = await _lang_of(uid)
         if not await acceptance_store.has_accepted(uid, TERMS_VERSION):
             await cq.answer()
-            await _send_pl_bulk_terms_prompt(cq.message, pl_id)
+            await _send_pl_bulk_terms_prompt(cq.message, pl_id, lang)
             return
-        await cq.answer("Начинаю рассылку mp3…")
+        await cq.answer(i18n.t(lang, "pl_bulk_start"))
         try:
             await cq.message.edit_reply_markup(reply_markup=None)
         except Exception:
             pass
-        await _run_pl_bulk(cq.message, uid, pl_id)
+        await _run_pl_bulk(cq.message, uid, pl_id, lang)
 
     return router

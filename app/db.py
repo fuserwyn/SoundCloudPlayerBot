@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 
 import aiosqlite
 
+from .i18n import normalize_lang
+
 logger = logging.getLogger(__name__)
 
 # Все отметки времени в БД — с часовым поясом Москвы (отображение в SQLite как +03:00).
@@ -100,9 +102,14 @@ class AcceptanceStore:
                         username       TEXT,
                         first_seen     TIMESTAMPTZ NOT NULL,
                         last_seen      TIMESTAMPTZ NOT NULL,
-                        request_count  BIGINT NOT NULL
+                        request_count  BIGINT NOT NULL,
+                        lang           TEXT NOT NULL DEFAULT 'ru'
                     )
                     """
+                )
+                await conn.execute(
+                    "ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS "
+                    "lang TEXT NOT NULL DEFAULT 'ru'"
                 )
                 await conn.execute(
                     """
@@ -168,10 +175,17 @@ class AcceptanceStore:
                     first_seen     TEXT    NOT NULL,
                     last_seen      TEXT    NOT NULL,
                     request_count  INTEGER NOT NULL,
+                    lang           TEXT    NOT NULL DEFAULT 'ru',
                     PRIMARY KEY (user_id)
                 )
                 """
             )
+            cur = await db.execute("PRAGMA table_info(bot_users)")
+            _bu_cols = {r[1] for r in await cur.fetchall()}
+            if "lang" not in _bu_cols:
+                await db.execute(
+                    "ALTER TABLE bot_users ADD COLUMN lang TEXT NOT NULL DEFAULT 'ru'"
+                )
             await db.execute("PRAGMA foreign_keys = ON")
             await db.execute(
                 """
@@ -296,8 +310,9 @@ class AcceptanceStore:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
                     """
-                    INSERT INTO bot_users (user_id, username, first_seen, last_seen, request_count)
-                    VALUES ($1, $2, $3, $3, 1)
+                    INSERT INTO bot_users
+                        (user_id, username, first_seen, last_seen, request_count, lang)
+                    VALUES ($1, $2, $3, $3, 1, 'ru')
                     ON CONFLICT (user_id) DO UPDATE SET
                         username = COALESCE($2, bot_users.username),
                         last_seen = EXCLUDED.last_seen,
@@ -315,8 +330,9 @@ class AcceptanceStore:
         async with aiosqlite.connect(self._db_path) as db:
             cur = await db.execute(
                 """
-                INSERT INTO bot_users (user_id, username, first_seen, last_seen, request_count)
-                VALUES (?, ?, ?, ?, 1)
+                INSERT INTO bot_users
+                    (user_id, username, first_seen, last_seen, request_count, lang)
+                VALUES (?, ?, ?, ?, 1, 'ru')
                 ON CONFLICT (user_id) DO UPDATE SET
                     username = COALESCE(excluded.username, username),
                     last_seen = excluded.last_seen,
@@ -328,6 +344,59 @@ class AcceptanceStore:
             row = await cur.fetchone()
             await db.commit()
             return int(row[0]) if row else 1
+
+    async def get_user_lang(self, user_id: int) -> str:
+        """Return stored lang code ('ru' or 'en') or default."""
+        if self._pool is not None:
+            async with self._pool.acquire() as conn:
+                v = await conn.fetchval(
+                    "SELECT lang FROM bot_users WHERE user_id = $1", user_id
+                )
+        else:
+            assert self._db_path is not None
+            async with aiosqlite.connect(self._db_path) as db:
+                cur = await db.execute(
+                    "SELECT lang FROM bot_users WHERE user_id = ?",
+                    (user_id,),
+                )
+                row = await cur.fetchone()
+                v = row[0] if row else None
+        if v is None or v == "":
+            return "ru"
+        return normalize_lang(str(v))
+
+    async def set_user_lang(self, user_id: int, lang: str) -> None:
+        code = normalize_lang(lang)
+        now = _now_msk()
+        if self._pool is not None:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO bot_users
+                        (user_id, username, first_seen, last_seen, request_count, lang)
+                    VALUES ($1, NULL, $2, $2, 0, $3)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        lang = EXCLUDED.lang
+                    """,
+                    user_id,
+                    now,
+                    code,
+                )
+        else:
+            assert self._db_path is not None
+            now_iso = now.isoformat(timespec="seconds")
+            async with aiosqlite.connect(self._db_path) as db:
+                await db.execute(
+                    """
+                    INSERT INTO bot_users
+                        (user_id, username, first_seen, last_seen, request_count, lang)
+                    VALUES (?, NULL, ?, ?, 0, ?)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        lang = excluded.lang
+                    """,
+                    (user_id, now_iso, now_iso, code),
+                )
+                await db.commit()
 
     @staticmethod
     def _normalize_playlist_name(name: str) -> str | None:
