@@ -26,6 +26,28 @@ class Settings:
     groq_model: str = "llama-3.3-70b-versatile"
     max_upload_bytes: int = 50 * 1024 * 1024  # Telegram Bot API hard limit for audio
     request_timeout: int = 120
+    """MP3 битрейт для извлечения аудио (kbps). Ниже = меньше диск/трафик/RAM."""
+    audio_bitrate: str = "192"
+    """Сколько треков качаем/режем одновременно. Ограничивает пик RAM/CPU (yt-dlp+ffmpeg)."""
+    max_concurrent_downloads: int = 2
+    """Верхний предел соединений в пуле Postgres. Меньше = меньше памяти/коннектов."""
+    db_pool_max_size: int = 3
+
+
+def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
+    """Читает целое из env с фолбэком на default при пустом/битом значении."""
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer, using %d", name, raw, default)
+        return default
+    if minimum is not None and value < minimum:
+        logger.warning("%s=%d below minimum %d, clamping", name, value, minimum)
+        return minimum
+    return value
 
 
 def _read_webapp_url(wait_seconds: int) -> str | None:
@@ -116,6 +138,17 @@ def load_settings() -> Settings:
     else:
         logger.info("GROQ_API_KEY not set, /smart and /playlist disabled.")
 
+    audio_bitrate = (os.getenv("AUDIO_BITRATE") or "192").strip() or "192"
+    max_concurrent_downloads = _env_int("MAX_CONCURRENT_DOWNLOADS", 2, minimum=1)
+    db_pool_max_size = _env_int("DB_POOL_MAX_SIZE", 3, minimum=1)
+    logger.info(
+        "Resource limits: audio_bitrate=%s kbps, max_concurrent_downloads=%d, "
+        "db_pool_max_size=%d",
+        audio_bitrate,
+        max_concurrent_downloads,
+        db_pool_max_size,
+    )
+
     return Settings(
         bot_token=token,
         download_dir=download_dir,
@@ -124,4 +157,7 @@ def load_settings() -> Settings:
         webapp_url=webapp_url,
         groq_api_key=groq_api_key,
         groq_model=groq_model,
+        audio_bitrate=audio_bitrate,
+        max_concurrent_downloads=max_concurrent_downloads,
+        db_pool_max_size=db_pool_max_size,
     )

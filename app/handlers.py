@@ -377,6 +377,7 @@ def build_router(settings: Settings, acceptance_store: AcceptanceStore) -> Route
                 url=url,
                 download_root=settings.download_dir,
                 max_bytes=settings.max_upload_bytes,
+                audio_bitrate=settings.audio_bitrate,
             )
         except SoundCloudError:
             logger.warning("Failed to download %s", url)

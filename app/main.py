@@ -12,6 +12,7 @@ from aiogram.types import ErrorEvent, MenuButtonWebApp, WebAppInfo
 from app.config import load_settings
 from app.db import AcceptanceStore
 from app.handlers import build_router
+from app.soundcloud import cleanup_stale_downloads
 
 
 def _configure_logging() -> None:
@@ -29,7 +30,15 @@ async def run() -> None:
 
     settings = load_settings()
 
-    acceptance_store = AcceptanceStore(settings.database_url, settings.db_path)
+    stale = cleanup_stale_downloads(settings.download_dir)
+    if stale:
+        log.info("Removed %d stale download dir(s) from a previous run.", stale)
+
+    acceptance_store = AcceptanceStore(
+        settings.database_url,
+        settings.db_path,
+        pool_max_size=settings.db_pool_max_size,
+    )
     await acceptance_store.init()
 
     bot = Bot(

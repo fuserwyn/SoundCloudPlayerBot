@@ -95,9 +95,15 @@ class PlaylistEntry:
 
 
 class AcceptanceStore:
-    def __init__(self, database_url: str | None, db_path: Path | None) -> None:
+    def __init__(
+        self,
+        database_url: str | None,
+        db_path: Path | None,
+        pool_max_size: int = 5,
+    ) -> None:
         self._database_url = database_url
         self._db_path = db_path
+        self._pool_max_size = max(1, pool_max_size)
         self._pool: Any = None
 
     async def init(self) -> None:
@@ -108,7 +114,7 @@ class AcceptanceStore:
             self._pool = await _asyncpg.create_pool(
                 self._database_url,
                 min_size=1,
-                max_size=5,
+                max_size=self._pool_max_size,
                 statement_cache_size=0,
             )
             async with self._pool.acquire() as conn:

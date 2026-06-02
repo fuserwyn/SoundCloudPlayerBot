@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +15,26 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 logger = logging.getLogger(__name__)
+
+# work_dir для каждой загрузки называется uuid4().hex — 32 hex-символа.
+_WORK_DIR_RE = re.compile(r"[0-9a-f]{32}")
+
+# Глобальный предел одновременных загрузок: yt-dlp + ffmpeg прожорливы по RAM/CPU,
+# без ограничения N параллельных запросов могут уронить контейнер (OOM) на малом плане.
+_download_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_download_semaphore() -> asyncio.Semaphore:
+    """Лениво создаёт семафор в работающем event loop (значение из env)."""
+    global _download_semaphore
+    if _download_semaphore is None:
+        try:
+            limit = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2"))
+        except ValueError:
+            limit = 2
+        _download_semaphore = asyncio.Semaphore(max(1, limit))
+    return _download_semaphore
+
 
 SOUNDCLOUD_URL_RE = re.compile(
     r"https?://(?:(?:www|m|on)\.)?soundcloud\.com/[^\s]+",
@@ -94,7 +115,7 @@ def _extract_artist(info: dict[str, Any]) -> str:
     return "SoundCloud"
 
 
-def _build_ydl_opts(out_template: str) -> dict[str, Any]:
+def _build_ydl_opts(out_template: str, audio_bitrate: str = "192") -> dict[str, Any]:
     return {
         "format": "bestaudio/best",
         "outtmpl": out_template,
@@ -107,16 +128,16 @@ def _build_ydl_opts(out_template: str) -> dict[str, Any]:
             {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
-                "preferredquality": "192",
+                "preferredquality": audio_bitrate,
             },
             {"key": "FFmpegMetadata"},
         ],
     }
 
 
-def _download_sync(url: str, work_dir: Path) -> Track:
+def _download_sync(url: str, work_dir: Path, audio_bitrate: str = "192") -> Track:
     out_template = str(work_dir / "%(title).200B.%(ext)s")
-    opts = _build_ydl_opts(out_template)
+    opts = _build_ydl_opts(out_template, audio_bitrate)
 
     with YoutubeDL(opts) as ydl:
         try:
@@ -347,36 +368,59 @@ def tag_id3(file_path: Path, bot_tag: str) -> None:
         logger.warning("Failed to stamp ID3 tag on %s", file_path, exc_info=True)
 
 
+def cleanup_stale_downloads(download_root: Path) -> int:
+    """Удаляет осиротевшие per-download папки (например, после краша процесса).
+
+    Безопасно: трогает только каталоги с именем-uuid (как их создаёт download_track),
+    а не сам download_root и не посторонние файлы. Возвращает число удалённых.
+    """
+    removed = 0
+    try:
+        entries = list(download_root.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        if entry.is_dir() and _WORK_DIR_RE.fullmatch(entry.name):
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+    return removed
+
+
 async def download_track(
     url: str,
     download_root: Path,
     max_bytes: int,
+    audio_bitrate: str = "192",
 ) -> Track:
     """Download a SoundCloud track and return metadata + file path.
 
-    Runs the blocking yt-dlp call in a worker thread.
+    Runs the blocking yt-dlp call in a worker thread. Параллелизм ограничен
+    глобальным семафором (MAX_CONCURRENT_DOWNLOADS), чтобы не выжрать RAM/CPU.
     """
 
-    work_dir = download_root / uuid.uuid4().hex
-    work_dir.mkdir(parents=True, exist_ok=True)
+    async with _get_download_semaphore():
+        work_dir = download_root / uuid.uuid4().hex
+        work_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        track = await asyncio.to_thread(_download_sync, url, work_dir)
-    except Exception:
-        shutil.rmtree(work_dir, ignore_errors=True)
-        raise
-
-    size = track.file_path.stat().st_size
-    if size > max_bytes:
         try:
-            parts = await asyncio.to_thread(
-                _split_mp3_into_chunks, track.file_path, max_bytes, work_dir
+            track = await asyncio.to_thread(
+                _download_sync, url, work_dir, audio_bitrate
             )
         except Exception:
-            track.cleanup()
             shutil.rmtree(work_dir, ignore_errors=True)
             raise
-        track.chunk_paths = parts
-        track.file_path = parts[0]
 
-    return track
+        size = track.file_path.stat().st_size
+        if size > max_bytes:
+            try:
+                parts = await asyncio.to_thread(
+                    _split_mp3_into_chunks, track.file_path, max_bytes, work_dir
+                )
+            except Exception:
+                track.cleanup()
+                shutil.rmtree(work_dir, ignore_errors=True)
+                raise
+            track.chunk_paths = parts
+            track.file_path = parts[0]
+
+        return track
