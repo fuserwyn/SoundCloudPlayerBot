@@ -8,10 +8,28 @@
     document.documentElement.classList.add("app--compact");
   }
 
+  /** Относительная яркость (WCAG) — Telegram не сообщает, светлая тема или тёмная. */
+  function isLightColor(hex) {
+    const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || "").trim());
+    if (!m) return null;
+    let h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    const n = parseInt(h, 16);
+    const lin = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
+      const s = c / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2] > 0.4;
+  }
+
   function applyTelegramTheme() {
     if (!tg || !tg.themeParams) return;
     const t = tg.themeParams;
     const r = document.documentElement;
+    const light = isLightColor(t.bg_color);
+    if (light !== null) {
+      r.classList.toggle("theme-light", light);
+    }
     if (t.bg_color) {
       r.style.setProperty("--tg-theme-bg-color", t.bg_color);
       r.style.setProperty("--bg", t.bg_color);
@@ -131,6 +149,7 @@
   const closeBtn = document.getElementById("closeBtn");
   const metaTitle = document.getElementById("metaTitle");
   const metaArtist = document.getElementById("metaArtist");
+  const autoplayHint = document.getElementById("autoplayHint");
 
   const searchInput = document.getElementById("searchInput");
   const searchBtn = document.getElementById("searchBtn");
@@ -331,6 +350,7 @@
 
   let widget = null;
   let isPlaying = false;
+  let widgetBound = false;
 
   /** Очередь при воспроизведении из плейлиста: листать треки кнопками вместо ±15 с. */
   let playlistQueue = null;
@@ -338,37 +358,101 @@
   let lastLoadedTrackUrl = "";
   let nowPlaying = { url: "", title: "", artist: "", thumbnail: null };
 
+  /**
+   * Автопереход в конце трека идёт без жеста пользователя: Android WebView глушит
+   * auto_play в load(), iOS — нет. Дожимаем play() после READY, а если политика
+   * автозапуска не пустила — зовём нажать ▶ вручную.
+   */
+  let pendingAutoPlay = false;
+  let autoPlayTimers = [];
+  const AUTOPLAY_RETRY_MS = [0, 200, 500, 1000, 1800];
+  const AUTOPLAY_GIVE_UP_MS = 2600;
+
   function setPlayBtn(playing) {
     isPlaying = playing;
     playBtn.textContent = playing ? "❚❚" : "▶";
   }
 
+  function clearAutoPlayNudge() {
+    autoPlayTimers.forEach((id) => clearTimeout(id));
+    autoPlayTimers = [];
+  }
+
+  function setAutoPlayBlocked(blocked) {
+    playBtn.classList.toggle("ctrl-btn--nudge", blocked);
+    if (!autoplayHint) return;
+    autoplayHint.textContent = blocked ? t("webapp_tap_to_play") : "";
+    autoplayHint.classList.toggle("hidden", !blocked);
+  }
+
+  function cancelAutoPlay() {
+    pendingAutoPlay = false;
+    clearAutoPlayNudge();
+    setAutoPlayBlocked(false);
+  }
+
+  function nudgeAutoPlay() {
+    if (!widget) return;
+    clearAutoPlayNudge();
+    pendingAutoPlay = true;
+    setAutoPlayBlocked(false);
+    AUTOPLAY_RETRY_MS.forEach((delay) => {
+      autoPlayTimers.push(
+        setTimeout(() => {
+          if (!widget || !pendingAutoPlay) return;
+          widget.isPaused((paused) => {
+            if (paused && pendingAutoPlay) widget.play();
+          });
+        }, delay)
+      );
+    });
+    autoPlayTimers.push(
+      setTimeout(() => {
+        if (!widget || !pendingAutoPlay) return;
+        widget.isPaused((paused) => {
+          if (paused && pendingAutoPlay) setAutoPlayBlocked(true);
+        });
+      }, AUTOPLAY_GIVE_UP_MS)
+    );
+  }
+
+  /** READY перевыстреливает на каждый load() — байндим слушатели ровно один раз. */
+  function bindWidgetEvents() {
+    if (widgetBound) return;
+    widgetBound = true;
+    widget.bind(SC.Widget.Events.PLAY, () => {
+      cancelAutoPlay();
+      setPlayBtn(true);
+    });
+    widget.bind(SC.Widget.Events.PAUSE, () => setPlayBtn(false));
+    widget.bind(SC.Widget.Events.FINISH, () => {
+      setPlayBtn(false);
+      if (Date.now() - lastTrackLoadAt < 500) return;
+      const pl = playlistQueue;
+      if (!pl || pl.urls.length < 2 || pl.index >= pl.urls.length - 1) {
+        return;
+      }
+      const j = pl.index + 1;
+      loadTrack(pl.urls[j], {
+        playlist: { plId: pl.plId, urls: pl.urls, index: j },
+      });
+      if (currentPlId === pl.plId && !plDetail.hidden) {
+        highlightPlRow(j);
+      }
+    });
+    widget.bind(SC.Widget.Events.PLAY_PROGRESS, () => {
+      if (!isPlaying) setPlayBtn(true);
+    });
+  }
+
   function attachWidget() {
     widget = SC.Widget(iframe);
     widget.bind(SC.Widget.Events.READY, () => {
+      bindWidgetEvents();
       widget.getCurrentSound((sound) => {
         if (sound) updateMeta(sound);
       });
-      widget.bind(SC.Widget.Events.PLAY, () => setPlayBtn(true));
-      widget.bind(SC.Widget.Events.PAUSE, () => setPlayBtn(false));
-      widget.bind(SC.Widget.Events.FINISH, () => {
-        setPlayBtn(false);
-        if (Date.now() - lastTrackLoadAt < 500) return;
-        const pl = playlistQueue;
-        if (!pl || pl.urls.length < 2 || pl.index >= pl.urls.length - 1) {
-          return;
-        }
-        const j = pl.index + 1;
-        loadTrack(pl.urls[j], {
-          playlist: { plId: pl.plId, urls: pl.urls, index: j },
-        });
-        if (currentPlId === pl.plId && !plDetail.hidden) {
-          highlightPlRow(j);
-        }
-      });
-      widget.bind(SC.Widget.Events.PLAY_PROGRESS, () => {
-        if (!isPlaying) setPlayBtn(true);
-      });
+      if (pendingAutoPlay) nudgeAutoPlay();
     });
   }
 
@@ -521,6 +605,9 @@
         : startCompact;
     lastTrackLoadAt = Date.now();
     lastLoadedTrackUrl = trackUrl;
+    pendingAutoPlay = true;
+    clearAutoPlayNudge();
+    setAutoPlayBlocked(false);
     setNowPlaying({
       url: trackUrl,
       title: t("webapp_loading"),
@@ -558,6 +645,7 @@
         color: "ff5500",
         callback: () => {
           widget.getCurrentSound((sound) => sound && updateMeta(sound));
+          nudgeAutoPlay();
         },
       });
     } else {
@@ -1145,6 +1233,7 @@
 
   playBtn.addEventListener("click", () => {
     if (!widget) return;
+    cancelAutoPlay();
     widget.toggle();
   });
 

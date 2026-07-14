@@ -12,6 +12,8 @@
   --link: var(--tg-theme-link-color, #ff7700);
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.15);
+  --inset-hi: rgba(255, 255, 255, 0.06);
+  --row-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
@@ -20,6 +22,42 @@
   --blur: blur(20px);
   --sc-search-bg: #2a2a2a;
   --sc-card-width: 144px;
+}
+
+/*
+ * Светлая тема. --bg/--text приезжают из Telegram themeParams и переворачиваются
+ * сами, а «стеклянные» и elev-слои ниже зашиты тёмными — без этих переопределений
+ * чёрный текст ложится на тёмный фон (строки треков, ghost-кнопки, стрелки ↑↓).
+ * Класс вешает player.js по яркости bg_color; вне Telegram — по prefers-color-scheme.
+ */
+html.theme-light {
+  --bg-elev-2: #e6e6ec;
+  --bg-glass: rgba(244, 244, 248, 0.92);
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.22);
+  --inset-hi: rgba(0, 0, 0, 0.05);
+  --row-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+  --sc-search-bg: #eeeef2;
+}
+
+@media (prefers-color-scheme: light) {
+  html:not(.tg-integrated) {
+    --bg: #ffffff;
+    --bg-elev: #f2f2f6;
+    --bg-elev-2: #e6e6ec;
+    --bg-glass: rgba(244, 244, 248, 0.92);
+    --text: #111111;
+    --text-dim: #6b6b70;
+    --border: rgba(0, 0, 0, 0.1);
+    --border-strong: rgba(0, 0, 0, 0.22);
+    --inset-hi: rgba(0, 0, 0, 0.05);
+    --row-shadow: 0 2px 10px rgba(0, 0, 0, 0.07);
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+    --sc-search-bg: #eeeef2;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -473,7 +511,7 @@ html.tg-integrated body::before {
   border-radius: 4px;
   background-size: cover;
   background-position: center;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px var(--inset-hi);
   overflow: hidden;
 }
 
@@ -721,7 +759,7 @@ html.tg-integrated body::before {
   content: "";
   position: absolute;
   inset: 0;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px var(--inset-hi);
   border-radius: inherit;
   pointer-events: none;
 }
@@ -784,6 +822,36 @@ html.tg-integrated body::before {
 
 .ctrl-btn--primary:active {
   transform: scale(0.96);
+}
+
+.ctrl-btn--nudge {
+  animation: ctrl-nudge 1.4s ease-in-out infinite;
+}
+
+@keyframes ctrl-nudge {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 6px 24px rgba(255, 85, 0, 0.45);
+  }
+  50% {
+    transform: scale(1.07);
+    box-shadow: 0 6px 30px rgba(255, 85, 0, 0.85);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctrl-btn--nudge {
+    animation: none;
+  }
+}
+
+.autoplay-hint {
+  margin: 0 0 8px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
 }
 
 /* Playlist row under player */
@@ -1051,7 +1119,7 @@ html.tg-integrated body::before {
   background: var(--bg-glass);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--row-shadow);
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
   backdrop-filter: var(--blur);
   -webkit-backdrop-filter: var(--blur);
@@ -1071,7 +1139,7 @@ html.tg-integrated body::before {
   padding: 0;
   background: var(--bg-elev-2) center / cover no-repeat;
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px var(--inset-hi);
 }
 
 .pl-tracks__thumb:focus {

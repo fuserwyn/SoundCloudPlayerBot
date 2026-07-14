@@ -234,6 +234,7 @@ _STR: dict[str, dict[str, str]] = {
         webapp_aria_down="Ниже",
         webapp_aria_delete_track="Удалить трек",
         webapp_aria_play_pause="Воспроизведение / пауза",
+        webapp_tap_to_play="Браузер заблокировал автозапуск — нажми ▶, чтобы продолжить.",
     ),
     "en": _M(
         welcome=(
@@ -444,6 +445,7 @@ _STR: dict[str, dict[str, str]] = {
         webapp_aria_down="Down",
         webapp_aria_delete_track="Remove track",
         webapp_aria_play_pause="Play / Pause",
+        webapp_tap_to_play="Autoplay was blocked — tap ▶ to continue.",
     ),
 }
 
